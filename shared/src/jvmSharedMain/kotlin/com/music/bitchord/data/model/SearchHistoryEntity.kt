@@ -31,4 +31,6 @@ enum class EntityType {
     @SerialName("ALBUM") ALBUM,
     @SerialName("ARTIST") ARTIST,
     @SerialName("PLAYLIST") PLAYLIST,
+    /** A submitted text query, replayed as a search rather than as a track id. */
+    @SerialName("QUERY") QUERY,
 }

@@ -141,6 +141,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -932,14 +933,13 @@ private fun BitChordApp(
         if (nav.selectedTab == TAB_APPLE_NEW) viewModel.ensureAppleBrowseLoaded()
         if (nav.selectedTab == TAB_SEARCH) {
             searchVisualActive = true
-            viewModel.ensureAppleGenresLoaded()
-            // The wall is only half the page: the catalogue rows beneath it
-            // are the same New page the tab beside this one draws, so they are
-            // read once and shared rather than fetched twice.
-            viewModel.ensureAppleBrowseLoaded()
+            if (providerAxes.ui == com.music.bitchord.data.settings.MusicProvider.APPLE) {
+                viewModel.ensureAppleGenresLoaded()
+            }
         } else {
             searchVisualActive = false
             searchKeyboardActive = false
+            nav.searchPageActive = false
         }
     }
     val signedInState = viewModel.signedIn.collectAsStateWithLifecycle()
@@ -2577,6 +2577,8 @@ private fun BitChordApp(
             searchTextValue = TextFieldValue(query, TextRange(query.length))
         }
     }
+    val searchImeController = LocalSoftwareKeyboardController.current
+    val searchFocusManager = LocalFocusManager.current
     val navSearchState = NavSearchState(
         visualActive = searchVisualActive,
         keyboardActive = searchKeyboardActive,
@@ -2593,12 +2595,9 @@ private fun BitChordApp(
         },
         searchSource = searchSource,
         onToggleSource = {
-            // The button cycles the sources in the order they are offered:
-            // the chosen catalogue first, then the others, with the device's
-            // own folder last — see [SearchSource.ordered].
-            val ordered = SearchSource.ordered(searchSource)
-            val next = ordered[(ordered.indexOf(searchSource) + 1) % ordered.size]
-            onSearchSourceChange(next)
+            // A fixed cycle visits all four sources; the selector's preferred-
+            // first presentation order is deliberately not reused as a cycle.
+            onSearchSourceChange(SearchSource.next(searchSource))
         },
         onTapSearchIcon = {
             if (nav.selectedTab != TAB_SEARCH) nav.lastSearchTab = nav.selectedTab
@@ -2617,12 +2616,39 @@ private fun BitChordApp(
             nav.selectedTab = TAB_SEARCH
             searchVisualActive = true
             searchKeyboardActive = false
+            nav.searchPageActive = false
         },
-        onTapBar = { searchKeyboardActive = true },
+        onTapBar = {
+            nav.searchPageActive = true
+            searchKeyboardActive = true
+        },
         onExit = {
-            searchKeyboardActive = false
-            searchVisualActive = false
-            nav.selectedTab = nav.lastSearchTab.takeIf { it != TAB_SEARCH } ?: TAB_HOME
+            when (com.music.bitchord.ui.components.searchBackStep(
+                keyboardActive = searchKeyboardActive,
+                hasQuery = query.isNotEmpty(),
+                historyPageActive = nav.searchPageActive,
+            )) {
+                com.music.bitchord.ui.components.SearchBackStep.HIDE_KEYBOARD -> {
+                    searchKeyboardActive = false
+                    searchImeController?.hide()
+                    searchFocusManager.clearFocus()
+                }
+                com.music.bitchord.ui.components.SearchBackStep.CLEAR_RESULTS -> {
+                    viewModel.onQueryChange("")
+                }
+                com.music.bitchord.ui.components.SearchBackStep.SHOW_GENRES -> {
+                    nav.searchPageActive = false
+                }
+                com.music.bitchord.ui.components.SearchBackStep.EXIT_SEARCH -> {
+                    searchVisualActive = false
+                    nav.selectedTab = com.music.bitchord.ui.components.validSearchReturnTab(
+                        candidate = nav.lastSearchTab,
+                        visibleTabs = visibleTabDefs.map { it.first },
+                        homeTab = TAB_HOME,
+                        searchTab = TAB_SEARCH,
+                    )
+                }
+            }
         },
         onCloseKeyboard = { searchKeyboardActive = false },
         focusRequester = searchNavFocus,
@@ -2834,10 +2860,15 @@ private fun BitChordApp(
     // short page doesn't sit above a large fixed empty band — the reservation
     // is exactly the bars, no more.
     val floatingBarsHeight = remember { mutableIntStateOf(0) }
-    val listPadding = PaddingValues(
-        top = topBarContentPadding(),
-        bottom = with(LocalDensity.current) { (floatingBarsHeight.intValue / density).dp } + 16.dp,
-    )
+    // Read the changing height in layout, not in this root's composition: a
+    // fold, search morph or arriving mini-player must not redraw every page.
+    val listTopPadding = topBarContentPadding()
+    val listDensity = LocalDensity.current
+    val listPadding: PaddingValues = remember(listTopPadding, listDensity, floatingBarsHeight) {
+        BarsContentPadding(top = listTopPadding) {
+            with(listDensity) { floatingBarsHeight.intValue.toDp() } + 16.dp
+        }
+    }
 
     // What colour the page currently under the bars is. The fades either end
     // of the screen are flat colour wherever their blur has least to say, so
@@ -3455,11 +3486,21 @@ private fun BitChordApp(
             }
         }
         BackHandler(
+            enabled = searchVisualActive && nav.selectedTab == TAB_SEARCH && detail == null &&
+                !nav.showSettings && !nav.showAccountScrobbling && !sheets.showSpotify &&
+                !nav.showSources && !nav.showListenTogether && !nav.showEqualizer && !nav.showReplay &&
+                selectedMoodGenreState.value == null && !sheets.showDiscord && !sheets.showHistory &&
+                !sheets.showFlow && !sheets.showQuickPicks && !nav.showGenres && !nav.showAudiobooks &&
+                sheets.openAudiobook == null && nav.itunesPodcastId == null && sheets.libraryShowAll == null &&
+                sheets.detailActiveShelf == null,
+            onBack = navSearchState.onExit,
+        )
+        BackHandler(
             enabled = detail == null && !nav.showSettings && !nav.showAccountScrobbling && !sheets.showSpotify &&
                 !nav.showSources && !nav.showListenTogether && !nav.showEqualizer && !nav.showReplay && selectedMoodGenreState.value == null &&
                 !sheets.showDiscord && !sheets.showHistory && !sheets.showFlow && !sheets.showQuickPicks && !nav.showGenres &&
                 !nav.showAudiobooks && sheets.openAudiobook == null && nav.itunesPodcastId == null &&
-                nav.selectedTab != TAB_HOME,
+                nav.selectedTab != TAB_HOME && !searchVisualActive,
         ) {
             nav.selectedTab = TAB_HOME
         }
@@ -4140,6 +4181,9 @@ private fun BitChordApp(
                 // makes well: a slide that keeps its frames beats a lens
                 // that tracks what passes underneath it.
                 LaunchedEffect(pageKey) {
+                    // A pushed page owns the keyboard. Search keeps its query
+                    // and results, ready for the first Back to reveal them.
+                    if (pageKey != "$TAB_KEY$TAB_SEARCH") searchKeyboardActive = false
                     GlassMotion.nav.moved()
                     // A page change leaves neither end of a flight where it was
                     // measured, so whatever is in the air is dropped rather
@@ -4679,19 +4723,21 @@ private fun BitChordApp(
                     sheets.libraryShowAll = null
 
                     if (tab == TAB_SEARCH) {
-                        if (useFoldingNav) {
-                            if (nav.selectedTab != TAB_SEARCH) {
-                                nav.lastSearchTab = nav.selectedTab
-                                nav.selectedTab = TAB_SEARCH
-                                searchVisualActive = true
-                                searchKeyboardActive = false
-                            } else {
-                                searchKeyboardActive = true
-                            }
-                        } else {
+                        if (nav.selectedTab != TAB_SEARCH) {
+                            nav.lastSearchTab = nav.selectedTab
                             nav.selectedTab = TAB_SEARCH
-                            viewModel.onQueryChange("")
-                            searchFocusRequested = true
+                            searchVisualActive = true
+                            searchKeyboardActive = false
+                            nav.searchPageActive = false
+                        } else {
+                            // The second Search tap opens Apple's dedicated
+                            // recent-search page; only that page needs the IME.
+                            nav.searchPageActive = true
+                            if (useFoldingNav) {
+                                searchKeyboardActive = true
+                            } else {
+                                searchFocusRequested = true
+                            }
                         }
                     } else {
                         searchVisualActive = false
@@ -5753,6 +5799,26 @@ private fun RootPage(
                     }
                 }
             },
+            onEditorialLinkClick = { link ->
+                if (!viewModel.openAppleEditorialLink(
+                        link,
+                        radio = page.editorialDestination?.presentation == "radio",
+                    )
+                ) {
+                    Toast.makeText(context, R.string.apple_destination_unsupported, Toast.LENGTH_SHORT).show()
+                }
+            },
+            onConcertLocation = { geo ->
+                page.editorialDestination?.let { destination ->
+                    viewModel.openAppleEditorialDestination(
+                        destination = destination.copy(geo = geo),
+                        title = page.title,
+                    )
+                }
+            },
+            onConcertTicket = { url ->
+                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+            },
             onSectionItemLongPress = pageActions.onBrowseLongPress,
             // The page's own tracks, so the sheet has them already and
             // Play, Shuffle and Open are the buttons beside the one that
@@ -5954,7 +6020,9 @@ private fun RootPage(
             onItemLongPress = pageActions.onShelfLongPress,
             elements = appleBrowseElements,
             onLinkClick = { link ->
-                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(link.url)))
+                if (!viewModel.openAppleEditorialLink(link, radio = false)) {
+                    Toast.makeText(context, R.string.apple_destination_unsupported, Toast.LENGTH_SHORT).show()
+                }
             },
             // The chevron after a group's title: the whole group, not one
             // card of it. The items are already loaded, so the page is local.
@@ -5978,7 +6046,9 @@ private fun RootPage(
                 listState = scroll.radio,
                 onItemClick = onHomeItemClick,
                 onLinkClick = { link ->
-                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(link.url)))
+                    if (!viewModel.openAppleEditorialLink(link, radio = true)) {
+                        Toast.makeText(context, R.string.apple_destination_unsupported, Toast.LENGTH_SHORT).show()
+                    }
                 },
                 onRowClick = { row ->
                     // Legacy rows enter the same route as ordered ShelfItems.
@@ -6064,6 +6134,7 @@ private fun RootPage(
         )
         TAB_SEARCH -> SearchScreen(
             query = query,
+            searchActive = nav.searchPageActive,
             // Apple's genre wall and recently-played rows belong to Apple's
             // look; with any other UI provider the page is what it was.
             genres = if (appleUi) {
@@ -6078,40 +6149,6 @@ private fun RootPage(
                 emptyList()
             },
             onGenreClick = { genre -> viewModel.openAppleGenre(genre.id, genre.name, genre.artworkUrl) },
-            // The catalogue under the wall is the New page's own shelves: the
-            // albums, playlists and stations Apple publishes for this account
-            // and storefront, drawn here so the search page is a catalogue and
-            // not only a keyboard.
-            catalogue = if (appleUi) {
-                (viewModel.appleBrowse.collectAsStateWithLifecycle().value as? UiState.Success)
-                    ?.data.orEmpty()
-            } else {
-                emptyList()
-            },
-            onCatalogueClick = { item ->
-                val videoId = item.videoId
-                if (videoId != null) {
-                    // A song lockup is a recording, not a page: start it the
-                    // way a search hit starts, as the seed of its own station.
-                    pageActions.playRadio(
-                        Song(
-                            videoId = videoId,
-                            title = item.title,
-                            artist = item.subtitle,
-                            thumbnailUrl = item.thumbnailUrl,
-                        ),
-                        QueueSource(inputs.searchLabel, PlaybackSourceType.SEARCH),
-                    )
-                } else {
-                    viewModel.openAppleCatalogueRow(item)
-                }
-            },
-            recentlyPlayed = if (appleUi) {
-                remember(player.song?.videoId) { RecentlyPlayed.recent(10) }
-            } else {
-                emptyList()
-            },
-            recentlyPlayedTitle = historyLabel,
             onQueryChange = viewModel::onQueryChange,
             filter = filter,
             currentSong = player.song,
@@ -6239,9 +6276,12 @@ private fun RootPage(
             // History items (onHistoryClick) navigate/play without re-logging.
             onSuggestionClick = viewModel::searchFor,
             onHistoryClick = { entity ->
-                // Tap a history entity: navigate to it or play it directly.
-                // Do NOT recordEntity here — tapping an existing history item
-                // must not update its timestamp and push it to the top.
+                // Queries rerun as text; legacy q: rows must never reach the
+                // player as if their query were a video id.
+                if (entity.entityType == EntityType.QUERY || entity.id.startsWith("q:")) {
+                    viewModel.searchFor(entity.title)
+                    return@SearchScreen
+                }
                 when (entity.entityType) {
                     EntityType.TRACK -> {
                         // Play the track by its video id
@@ -6255,6 +6295,7 @@ private fun RootPage(
                             QueueSource(entity.title, PlaybackSourceType.SEARCH),
                         )
                     }
+                    EntityType.QUERY -> Unit // Handled above; never a playable id.
                     EntityType.ALBUM, EntityType.ARTIST, EntityType.PLAYLIST -> {
                         viewModel.openDetail(
                             browseId = entity.id,
@@ -7870,6 +7911,17 @@ private class PodcastUiState {
  * over the feed win over the tab, in this order; a detail page wins over
  * the pages it can be opened from (the Library grid, Genres).
  */
+@Stable
+private class BarsContentPadding(
+    private val top: Dp,
+    private val bottom: () -> Dp,
+) : PaddingValues {
+    override fun calculateLeftPadding(layoutDirection: LayoutDirection): Dp = 0.dp
+    override fun calculateRightPadding(layoutDirection: LayoutDirection): Dp = 0.dp
+    override fun calculateTopPadding(): Dp = top
+    override fun calculateBottomPadding(): Dp = bottom()
+}
+
 internal fun rootPageKey(
     nav: RootNav,
     sheets: RootSheets,
@@ -7954,6 +8006,8 @@ internal class RootNav {
     var showListenTogether by mutableStateOf(false)
     var showEqualizer by mutableStateOf(false)
     var lastSearchTab by mutableIntStateOf(TAB_HOME)
+    /** Dedicated recent-search/results page after the Search pill is tapped. */
+    var searchPageActive by mutableStateOf(false)
     // Which Settings category is open, or null for the category index. Held
     // here rather than inside SettingsScreen so the top bar's back button can
     // close the category before it closes Settings itself.
@@ -7986,6 +8040,7 @@ internal class RootNav {
                     it.settingsCategory,
                     it.replaySharePage,
                     it.showListenTogetherMembers,
+                    it.searchPageActive,
                 )
             },
             restore = { values ->
@@ -8008,6 +8063,7 @@ internal class RootNav {
                     settingsCategory = values[15] as String?
                     replaySharePage = values[16] as ReplayStoryPage?
                     showListenTogetherMembers = values[17] as Boolean
+                    searchPageActive = values.getOrNull(18) as Boolean? ?: false
                 }
             },
         )

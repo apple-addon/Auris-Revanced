@@ -317,6 +317,23 @@ object AppleCatalogue {
             AppleEditorialPage.serializer(),
         )
 
+    /** Opens a typed room, grouping, chart or location-based concert hub. */
+    suspend fun editorialDestination(
+        baseUrl: String,
+        destination: com.music.bitchord.data.model.AppleEditorialDestination,
+    ): Result<AppleEditorialPage> =
+        get(
+            baseUrl,
+            listOf("browse", "destination"),
+            buildMap {
+                put("kind", destination.kind)
+                if (destination.id.isNotBlank()) put("id", destination.id)
+                if (destination.popId.isNotBlank()) put("popId", destination.popId)
+                if (destination.geo.isNotBlank()) put("geo", destination.geo)
+            },
+            AppleEditorialPage.serializer(),
+        )
+
     /**
      * A genre's own page, as the sections Apple draws on it.
      *
@@ -719,10 +736,20 @@ data class AppleEditorialItem(
 )
 
 @Serializable
+data class AppleDestination(
+    @SerialName("kind") val kind: String = "",
+    @SerialName("id") val id: String = "",
+    @SerialName("popId") val popId: String = "",
+    @SerialName("geo") val geo: String = "",
+    @SerialName("route") val route: String = "",
+)
+
+@Serializable
 data class AppleEditorialLink(
     @SerialName("label") val label: String = "",
     @SerialName("url") val url: String = "",
     @SerialName("target") val target: String = "",
+    @SerialName("destination") val destination: AppleDestination? = null,
 )
 
 /** One ordered editorial element; older servers populate only title/items. */
@@ -735,16 +762,88 @@ data class AppleEditorialShelf(
     @SerialName("resourceTypes") val resourceTypes: List<String> = emptyList(),
     @SerialName("items") val items: List<AppleEditorialItem> = emptyList(),
     @SerialName("links") val links: List<AppleEditorialLink> = emptyList(),
+    @SerialName("itemIds") val itemIds: List<String> = emptyList(),
+    @SerialName("destination") val destination: AppleDestination? = null,
 )
 
 /** A page Apple publishes — New or Radio — as the shelves it is made of. */
 @Serializable
 data class AppleEditorialPage(
     @SerialName("page") val page: String = "",
+    @SerialName("title") val title: String = "",
+    @SerialName("destination") val destination: AppleDestination? = null,
     @SerialName("updatedAt") val updatedAt: String = "",
     @SerialName("heroes") val heroes: List<AppleEditorialItem> = emptyList(),
     @SerialName("elements") val elements: List<AppleEditorialShelf> = emptyList(),
     @SerialName("shelves") val shelves: List<AppleEditorialShelf> = emptyList(),
+    @SerialName("locationRequired") val locationRequired: Boolean = false,
+    @SerialName("geoHashLocation") val geoHashLocation: String? = null,
+    @SerialName("concertHub") val concertHub: AppleConcertHubWire? = null,
+)
+
+@Serializable
+data class AppleConcertHubWire(
+    @SerialName("order") val order: List<String> = emptyList(),
+    @SerialName("containers") val containers: List<AppleConcertContainerWire> = emptyList(),
+)
+
+@Serializable
+data class AppleConcertContainerWire(
+    @SerialName("id") val id: String = "",
+    @SerialName("title") val title: String = "",
+    @SerialName("href") val href: String? = null,
+    @SerialName("data") val data: List<AppleConcertEventWire> = emptyList(),
+)
+
+@Serializable
+data class AppleConcertEventWire(
+    @SerialName("id") val id: String = "",
+    @SerialName("attributes") val attributes: Attributes = Attributes(),
+    @SerialName("relationships") val relationships: Relationships = Relationships(),
+) {
+    @Serializable
+    data class Attributes(
+        @SerialName("name") val name: String = "",
+        @SerialName("startISODateTime") val startIso: String = "",
+        @SerialName("endISODateTime") val endIso: String = "",
+        @SerialName("timezone") val timezone: String = "",
+        @SerialName("tickets") val tickets: List<AppleConcertTicket> = emptyList(),
+    )
+
+    @Serializable
+    data class Relationships(
+        @SerialName("artists") val artists: Related = Related(),
+        @SerialName("venues") val venues: Related = Related(),
+    )
+
+    @Serializable
+    data class Related(
+        @SerialName("data") val data: List<RelatedItem> = emptyList(),
+    )
+
+    @Serializable
+    data class RelatedItem(
+        @SerialName("attributes") val attributes: RelatedAttributes = RelatedAttributes(),
+    )
+
+    @Serializable
+    data class RelatedAttributes(
+        @SerialName("name") val name: String = "",
+        @SerialName("artwork") val artwork: Artwork? = null,
+        @SerialName("hero") val hero: Artwork? = null,
+        @SerialName("structuredAddress") val structuredAddress: kotlinx.serialization.json.JsonObject? = null,
+    )
+
+    @Serializable
+    data class Artwork(
+        @SerialName("url") val url: String = "",
+    )
+}
+
+@Serializable
+data class AppleConcertTicket(
+    @SerialName("vendor") val vendor: String = "",
+    @SerialName("url") val url: String = "",
 )
 
 /** Rows of one kind, as a catalogue route answers them. */

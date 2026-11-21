@@ -31,6 +31,7 @@ class RootNavSaverTest {
         "showListenTogether" to { it.showListenTogether },
         "showEqualizer" to { it.showEqualizer },
         "showListenTogetherMembers" to { it.showListenTogetherMembers },
+        "searchPageActive" to { it.searchPageActive },
     )
 
     private fun RootNav.set(name: String) = when (name) {
@@ -44,6 +45,7 @@ class RootNavSaverTest {
         "showListenTogether" -> showListenTogether = true
         "showEqualizer" -> showEqualizer = true
         "showListenTogetherMembers" -> showListenTogetherMembers = true
+        "searchPageActive" -> searchPageActive = true
         else -> error(name)
     }
 
@@ -99,7 +101,7 @@ class RootNavSaverTest {
             itunesPodcastId = "x"
         }
         val saved = with(RootNav.Saver) { scope.save(nav) } as List<*>
-        assertEquals(18, saved.size)
+        assertEquals(19, saved.size)
         saved.forEach { value ->
             assertTrue(
                 "unexpected ${value?.javaClass}",

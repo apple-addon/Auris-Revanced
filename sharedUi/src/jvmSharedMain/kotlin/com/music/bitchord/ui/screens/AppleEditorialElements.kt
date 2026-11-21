@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -43,7 +44,7 @@ import com.music.bitchord.ui.components.longPressMenuClickable
 
 /** One New element, with the same controller kind and display style Apple sent. */
 @Composable
-internal fun AppleNewEditorialElement(
+fun AppleNewEditorialElement(
     element: AppleEditorialElement,
     onItemClick: (ShelfItem, String) -> Unit,
     onItemLongPress: ((ShelfItem) -> Unit)?,
@@ -76,7 +77,7 @@ internal fun AppleNewEditorialElement(
 
 /** One Radio element; its cards stay square, including its video lockups. */
 @Composable
-internal fun AppleRadioEditorialElement(
+fun AppleRadioEditorialElement(
     element: AppleEditorialElement,
     onItemClick: (ShelfItem, String) -> Unit,
     onLinkClick: (AppleEditorialLink) -> Unit,
@@ -101,6 +102,40 @@ internal fun AppleRadioEditorialElement(
                     videoCards = false,
                 )
             }
+        }
+    }
+}
+
+/** A complete editorial room, kept lazy even when Apple supplies hundreds of rows. */
+fun LazyListScope.appleRoomEditorialRows(
+    element: AppleEditorialElement,
+    onItemClick: (ShelfItem, String) -> Unit,
+    onItemLongPress: ((ShelfItem) -> Unit)?,
+) {
+    item(key = "room:header:${element.id}") {
+        AppleEditorialHeading(element.title)
+    }
+    itemsIndexed(
+        items = element.items.chunked(2),
+        key = { index, row -> "room:row:${element.id}:$index:${row.first().browseId ?: row.first().title}" },
+    ) { _, row ->
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = PAGE_GUTTER, vertical = 7.dp),
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            row.forEach { item ->
+                AppleEditorialCard(
+                    item = item,
+                    shelfTitle = element.title,
+                    onItemClick = onItemClick,
+                    onItemLongPress = onItemLongPress,
+                    videoCard = false,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            if (row.size == 1) Spacer(Modifier.weight(1f))
         }
     }
 }

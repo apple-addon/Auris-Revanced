@@ -10,17 +10,7 @@
 
 package com.music.bitchord.ui.components
 
-import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.ExperimentalSharedTransitionApi
-import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.spring
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -31,9 +21,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.ime
-import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBars
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.union
@@ -87,12 +75,10 @@ import com.music.bitchord.ui.components.foldingtabbar.FloatingTabBarDefaults
 import com.music.bitchord.ui.components.foldingtabbar.clipWhilePressed
 import com.music.bitchord.ui.components.floatingtabbar.FloatingTabBarScrollConnection
 import com.music.bitchord.ui.player.PlayerDock
-import kotlinx.coroutines.delay
 
 private val NavBarShape = RoundedCornerShape(percent = 50)
 private val NavBarSearchBarHeight = 48.dp
 private val NavBarRowHeight = 68.dp
-private const val KeyboardOpenDelayMs = 220L
 
 @Composable
 fun GlassFoldingNavBar(
@@ -115,69 +101,28 @@ fun GlassFoldingNavBar(
     pull: MiniPlayerPull? = null,
     modifier: Modifier = Modifier,
 ) {
-    AnimatedContent(
-        targetState = search.keyboardActive,
-        modifier = modifier,
-        transitionSpec = {
-            if (targetState) {
-                (slideInVertically(
-                    animationSpec = spring(
-                        dampingRatio = Spring.DampingRatioMediumBouncy,
-                        stiffness = Spring.StiffnessMedium,
-                    ),
-                ) { it / 2 } + fadeIn()) togetherWith
-                    (slideOutVertically(
-                        animationSpec = spring(
-                            dampingRatio = Spring.DampingRatioNoBouncy,
-                            stiffness = Spring.StiffnessMedium,
-                        ),
-                    ) { it } + fadeOut())
-            } else {
-                (slideInVertically(
-                    animationSpec = spring(
-                        dampingRatio = Spring.DampingRatioMediumBouncy,
-                        stiffness = Spring.StiffnessMedium,
-                    ),
-                ) { it } + fadeIn()) togetherWith
-                    (slideOutVertically(
-                        animationSpec = spring(
-                            dampingRatio = Spring.DampingRatioNoBouncy,
-                            stiffness = Spring.StiffnessMedium,
-                        ),
-                    ) { it / 2 } + fadeOut())
-            }
-        },
-        label = "glassFoldingNavSearchKeyboard",
-    ) { keyboardActive ->
-        if (keyboardActive) {
-            NavBarSearchInputBar(
-                state = search,
-                placeholder = placeholder,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        } else {
-            GlassFoldingNavBarChrome(
-                tabs = tabs,
-                selectedIndex = selectedIndex,
-                onTabSelected = onTabSelected,
-                scrollConnection = scrollConnection,
-                search = search,
-                placeholder = placeholder,
-                song = song,
-                isPlaying = isPlaying,
-                isLoading = isLoading,
-                onPlayPause = onPlayPause,
-                onNext = onNext,
-                onPrevious = onPrevious,
-                onExpand = onExpand,
-                controlsLocked = controlsLocked,
-                onBlockedControl = onBlockedControl,
-                dock = dock,
-                pull = pull,
-                modifier = Modifier.fillMaxWidth(),
-            )
-        }
-    }
+    // Keep the whole chrome mounted while the keyboard opens. Replacing it
+    // used to remove the mini-player and restart every glass surface.
+    GlassFoldingNavBarChrome(
+        tabs = tabs,
+        selectedIndex = selectedIndex,
+        onTabSelected = onTabSelected,
+        scrollConnection = scrollConnection,
+        search = search,
+        placeholder = placeholder,
+        song = song,
+        isPlaying = isPlaying,
+        isLoading = isLoading,
+        onPlayPause = onPlayPause,
+        onNext = onNext,
+        onPrevious = onPrevious,
+        onExpand = onExpand,
+        controlsLocked = controlsLocked,
+        onBlockedControl = onBlockedControl,
+        dock = dock,
+        pull = pull,
+        modifier = modifier.fillMaxWidth(),
+    )
 }
 
 @Composable
@@ -201,8 +146,6 @@ private fun GlassFoldingNavBarChrome(
     pull: MiniPlayerPull?,
     modifier: Modifier,
 ) {
-    BackHandler(enabled = search.visualActive, onBack = search.onExit)
-
     val contentColor = glassContentColor()
     // Selected tab is Apple's systemRed, not the glass ink — see GlassTintTokens.
     val selectedColor = com.music.bitchord.ui.theme.GlassTintTokens.selectedRedColor(glassUsesDarkAppearance())
@@ -235,6 +178,7 @@ private fun GlassFoldingNavBarChrome(
             }
         }
 
+    val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
     FoldingTabBar(
         selectedTabKey = selectedIndex,
         scrollConnection = scrollConnection,
@@ -254,20 +198,36 @@ private fun GlassFoldingNavBarChrome(
             expandedElevation = 0.dp,
         ),
         modifier = modifier
-            .windowInsetsPadding(
-                WindowInsets.navigationBars.union(WindowInsets(bottom = 15.dp)),
+            // MainActivity owns the IME lift. While it is visible, keep only
+            // an 8 dp field-to-keyboard gap; never add the gesture inset too.
+            .then(
+                if (imeVisible) {
+                    Modifier.padding(bottom = 8.dp)
+                } else {
+                    Modifier.windowInsetsPadding(
+                        WindowInsets.navigationBars.union(WindowInsets(bottom = 15.dp)),
+                    )
+                },
             )
             .padding(horizontal = BAR_GUTTER)
             .padding(bottom = 2.dp),
         accessory = playerAccessory,
         searchMode = search.visualActive,
         searchBarContent = { contentModifier ->
-            SearchBarPlaceholder(
-                state = search,
-                placeholder = placeholder,
-                contentColor = contentColor,
-                modifier = contentModifier,
-            )
+            if (search.keyboardActive) {
+                NavBarSearchInputBar(
+                    state = search,
+                    placeholder = placeholder,
+                    modifier = contentModifier,
+                )
+            } else {
+                SearchBarPlaceholder(
+                    state = search,
+                    placeholder = placeholder,
+                    contentColor = contentColor,
+                    modifier = contentModifier,
+                )
+            }
         },
         expandedTabs = { foldingTabs, surfaceBackdrop ->
             // FoldingTabGroup samples this lambda from a LaunchedEffect started
@@ -442,30 +402,15 @@ private fun NavBarSearchInputBar(
     val contentColor = glassContentColor()
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
-    // imePadding already lifts the bar clear of the keyboard. The navigation
-    // bar inset is still reported while the IME is up, and adding it on top
-    // floated the field a gesture-bar's height above the keyboard instead of
-    // docking it. Keep the gesture inset only when no keyboard is showing.
-    val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
-
-    BackHandler {
-        focusManager.clearFocus()
-        keyboardController?.hide()
-        state.onCloseKeyboard()
-    }
-
-    LaunchedEffect(Unit) {
-        delay(KeyboardOpenDelayMs)
+    LaunchedEffect(state.focusRequester) {
         state.focusRequester.requestFocus()
     }
 
     Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = modifier
-            .imePadding()
-            .then(if (imeVisible) Modifier else Modifier.navigationBarsPadding())
             .padding(horizontal = 16.dp)
-            .padding(top = 6.dp, bottom = if (imeVisible) 0.dp else 2.dp)
+            .padding(top = 6.dp)
             .height(NavBarSearchBarHeight)
             .clip(NavBarShape)
             .liquidGlass(shape = NavBarShape)

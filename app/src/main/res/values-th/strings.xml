@@ -365,6 +365,11 @@
     <string name="no_internet_connection">ไม่มีการเชื่อมต่ออินเทอร์เน็ต</string>
     <string name="youtube_request_rejected">YouTube Music ปฏิเสธคำขอ ลองลงชื่อเข้าใช้อีกครั้ง</string>
     <string name="apple_request_rejected">Apple Music rejected the request. Check the Apple Music addon session and try again.</string>
+    <string name="apple_destination_unsupported">This Apple Music destination is not supported here</string>
+    <string name="apple_concert_geohash_hint">Four-letter geohash (for example, gcpv)</string>
+    <string name="apple_concerts_show">Show concerts</string>
+    <string name="apple_concerts_empty">No concerts found for this location</string>
+    <string name="apple_concert_ticket">Tickets</string>
     <string name="something_went_wrong">เกิดข้อผิดพลาดบางอย่าง</string>
     <string name="unknown_artist">ศิลปินที่ไม่ทราบชื่อ</string>
     <plurals name="downloads_failed_count">

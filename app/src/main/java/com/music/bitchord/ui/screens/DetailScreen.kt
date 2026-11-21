@@ -132,6 +132,8 @@ import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
 import dev.chrisbanes.haze.materials.HazeMaterials
 import com.music.bitchord.data.canvas.CanvasArtwork
 import com.music.bitchord.data.canvas.CanvasRepository
+import com.music.bitchord.data.model.AppleConcertEvent
+import com.music.bitchord.data.model.AppleEditorialLink
 import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.DetailPage
 import com.music.bitchord.data.model.CARD_ART_PX
@@ -176,6 +178,8 @@ import com.music.bitchord.ui.theme.ArtworkPalette
 import com.music.bitchord.ui.theme.rememberArtworkPalette
 import kotlin.math.roundToInt
 import java.util.Locale
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
 import kotlin.math.roundToLong
 
 private const val MAX_ARTIST_SONGS = 20
@@ -269,6 +273,9 @@ fun DetailScreen(
     onSongSwipe: (Song) -> Unit,
     onShuffle: (List<Song>) -> Unit,
     onSectionItemClick: (ShelfItem) -> Unit,
+    onEditorialLinkClick: (AppleEditorialLink) -> Unit = {},
+    onConcertLocation: (String) -> Unit = {},
+    onConcertTicket: (String) -> Unit = {},
     onArtistClick: (String, String) -> Unit,
     onAddSuggested: (Song) -> Unit,
     contentPadding: PaddingValues,
@@ -342,6 +349,22 @@ fun DetailScreen(
      */
     onLoadMore: (() -> Unit)? = null,
 ) {
+    val destination = page.editorialDestination
+    if (destination != null && activeShelf == null) {
+        AppleEditorialDestinationDetail(
+            page = page,
+            listState = listState,
+            contentPadding = contentPadding,
+            onItemClick = onSectionItemClick,
+            onItemLongPress = onSectionItemLongPress,
+            onShelfHeaderClick = onActiveShelfChange,
+            onLinkClick = onEditorialLinkClick,
+            onConcertLocation = onConcertLocation,
+            onConcertTicket = onConcertTicket,
+            modifier = modifier,
+        )
+        return
+    }
     val appleLibraryCollection = page.browseId.removePrefix("apple:library:")
         .takeIf { it != page.browseId }
     if (appleLibraryCollection != null && appleLibraryCollection != "songs") {
@@ -369,7 +392,8 @@ fun DetailScreen(
     }
     val isArtist = page.type == BrowseType.ARTIST
     val isAppleEditorial = page.browseId.startsWith(com.music.bitchord.data.apple.AppleSources.GENRE_PREFIX) ||
-        page.browseId.startsWith(com.music.bitchord.data.apple.AppleSources.CURATOR_PREFIX)
+        page.browseId.startsWith(com.music.bitchord.data.apple.AppleSources.CURATOR_PREFIX) ||
+        page.editorialDestination != null
     // The overflow menu's two shortcuts. Titles are localised, so the match is
     // on the stable words YouTube uses across locales plus a positional
     // fallback — an artist page's first shelf is albums and its second singles.
@@ -902,6 +926,219 @@ fun DetailScreen(
     )
 }
 }
+}
+
+/** Apple's typed destination pages, including its real location-based concerts. */
+@Composable
+private fun AppleEditorialDestinationDetail(
+    page: DetailPage,
+    listState: LazyListState,
+    contentPadding: PaddingValues,
+    onItemClick: (ShelfItem) -> Unit,
+    onItemLongPress: ((ShelfItem) -> Unit)?,
+    onShelfHeaderClick: (HomeShelf) -> Unit,
+    onLinkClick: (AppleEditorialLink) -> Unit,
+    onConcertLocation: (String) -> Unit,
+    onConcertTicket: (String) -> Unit,
+    modifier: Modifier,
+) {
+    val destination = requireNotNull(page.editorialDestination)
+    val palette = rememberArtworkPalette(imageUrl = null)
+    LazyColumn(
+        state = listState,
+        modifier = modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.background),
+        contentPadding = PaddingValues(bottom = contentPadding.calculateBottomPadding()),
+    ) {
+        item(key = "apple-destination:title") {
+            Text(
+                text = page.title,
+                style = MaterialTheme.typography.headlineMedium,
+                color = MaterialTheme.colorScheme.onBackground,
+                modifier = Modifier.padding(
+                    start = PAGE_GUTTER,
+                    end = PAGE_GUTTER,
+                    top = topBarContentPadding() + 12.dp,
+                    bottom = 10.dp,
+                ),
+            )
+        }
+        when (val state = page.songs) {
+            is UiState.Loading -> detailSkeleton(false)
+            is UiState.Error -> item(key = "apple-destination:error") {
+                MessageState(state.message)
+            }
+            is UiState.Success -> {
+                val elements = page.editorialElements.orEmpty()
+                if (destination.kind == "room") {
+                    elements.forEach { element ->
+                        appleRoomEditorialRows(
+                            element = element,
+                            onItemClick = { item, _ -> onItemClick(item) },
+                            onItemLongPress = onItemLongPress,
+                        )
+                    }
+                } else {
+                    itemsIndexed(
+                        items = elements,
+                        key = { index, element -> "apple-destination:${destination.kind}:$index:${element.id}" },
+                    ) { _, element ->
+                        if (destination.presentation == "radio") {
+                            AppleRadioEditorialElement(
+                                element = element,
+                                onItemClick = { item, _ -> onItemClick(item) },
+                                onLinkClick = onLinkClick,
+                            )
+                        } else {
+                            AppleNewEditorialElement(
+                                element = element,
+                                onItemClick = { item, _ -> onItemClick(item) },
+                                onItemLongPress = onItemLongPress,
+                                onShelfHeaderClick = onShelfHeaderClick,
+                                onLinkClick = onLinkClick,
+                            )
+                        }
+                    }
+                }
+                page.concertHub?.let { hub ->
+                    if (hub.locationRequired) {
+                        item(key = "apple-concerts:location") {
+                            var geo by rememberSaveable(page.requestId) {
+                                mutableStateOf(hub.geoHashLocation.orEmpty())
+                            }
+                            DetailSearchField(
+                                query = geo,
+                                onQueryChange = { geo = it },
+                                onClose = { geo = "" },
+                                autoFocus = false,
+                                onFocused = {},
+                                palette = palette,
+                                type = BrowseType.OTHER,
+                                hint = stringResource(R.string.apple_concert_geohash_hint),
+                            )
+                            Text(
+                                text = stringResource(R.string.apple_concerts_show),
+                                style = MaterialTheme.typography.titleMedium,
+                                color = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier
+                                    .padding(horizontal = HEADER_GUTTER, vertical = 4.dp)
+                                    .clip(RoundedCornerShape(50))
+                                    .clickable(enabled = geo.trim().length == 4) {
+                                        onConcertLocation(geo.trim().lowercase(Locale.ROOT))
+                                    }
+                                    .padding(horizontal = 14.dp, vertical = 10.dp),
+                            )
+                        }
+                    }
+                    if (!hub.locationRequired && hub.containers.isEmpty()) {
+                        item(key = "apple-concerts:empty") {
+                            MessageState(stringResource(R.string.apple_concerts_empty))
+                        }
+                    }
+                    hub.containers.forEach { container ->
+                        item(key = "apple-concerts:header:${container.id}") {
+                            SectionHeading(container.title, palette)
+                        }
+                        itemsIndexed(
+                            items = container.events,
+                            key = { index, event -> "apple-concerts:${container.id}:$index:${event.id}" },
+                        ) { _, event ->
+                            AppleConcertEventRow(
+                                event = event,
+                                palette = palette,
+                                onTicket = onConcertTicket,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AppleConcertEventRow(
+    event: AppleConcertEvent,
+    palette: ArtworkPalette,
+    onTicket: (String) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = PAGE_GUTTER, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        AsyncImage(
+            model = event.artworkUrl.artworkAt(ROW_ART_PX),
+            contentDescription = event.artistName,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier
+                .size(64.dp)
+                .clip(RoundedCornerShape(10.dp))
+                .background(palette.elevated),
+        )
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = event.name,
+                style = MaterialTheme.typography.titleMedium,
+                color = palette.onBackground,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (event.artistName.isNotBlank()) {
+                Text(
+                    text = event.artistName,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = palette.onBackgroundVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            val place = listOf(event.venueName, event.address).filter { it.isNotBlank() }
+                .joinToString(" · ")
+            if (place.isNotBlank()) {
+                Text(
+                    text = place,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = palette.onBackgroundVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            val date = concertDate(event)
+            if (date.isNotBlank()) {
+                Text(
+                    text = date,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = palette.onBackgroundVariant,
+                )
+            }
+            val ticketUrl = event.ticketUrl
+            if (ticketUrl != null) {
+                Text(
+                    text = listOf(stringResource(R.string.apple_concert_ticket), event.ticketVendor)
+                        .filter { it.isNotBlank() }.joinToString(" · "),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = palette.accent,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .clickable { onTicket(ticketUrl) }
+                        .padding(vertical = 4.dp),
+                )
+            }
+        }
+    }
+}
+
+private fun concertDate(event: AppleConcertEvent): String {
+    if (event.startIso.isBlank()) return ""
+    return runCatching {
+        ZonedDateTime.parse(event.startIso).format(
+            DateTimeFormatter.ofPattern("MMM d, yyyy · h:mm a", Locale.getDefault()),
+        )
+    }.getOrDefault(event.startIso)
 }
 
 private enum class AppleLibraryShelfSort { DEFAULT, TITLE, RECENTLY_ADDED, ARTIST }

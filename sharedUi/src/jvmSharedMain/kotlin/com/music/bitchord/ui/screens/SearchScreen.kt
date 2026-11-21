@@ -124,6 +124,8 @@ fun SearchScreen(
     scrollResetTrigger: Int,
     focusRequested: Boolean,
     onFocusHandled: () -> Unit,
+    /** Explicit dedicated-search state, independent of keyboard focus. */
+    searchActive: Boolean = false,
     onSongClick: (List<Song>, Int) -> Unit,
     onSongLongPress: (Song) -> Unit,
     onSongSwipe: (Song) -> Unit,
@@ -198,7 +200,7 @@ fun SearchScreen(
     // search being started, and a wall that suddenly replaced the history
     // under the cursor would be the wrong page.
     var fieldActive by remember { mutableStateOf(false) }
-    val searching = fieldActive || query.isNotEmpty()
+    val searching = searchActive || fieldActive || query.isNotEmpty()
     // Tapping the search tab from the nav bar sets focusRequested;
     // respond by focusing the field and opening the keyboard.
     LaunchedEffect(focusRequested) {
@@ -223,7 +225,7 @@ fun SearchScreen(
     // them only while the user is still typing (suggestions visible), so they
     // appear as a dropdown beneath the text completions rather than floating
     // after the search has committed.
-    val showTypeahead = typeaheadResults.isNotEmpty() && suggesting
+    val showTypeahead = typeaheadResults.isNotEmpty() && !searchingLibrary
     LaunchedEffect(listState, results, loadingMore, searchingLibrary) {
         if (results !is UiState.Success || searchingLibrary) return@LaunchedEffect
         snapshotFlow {
@@ -307,8 +309,8 @@ fun SearchScreen(
                     onSongLongPress = onSongLongPress,
                     onSongSwipe = onSongSwipe,
                 )
-                suggesting -> {
-                    searchSuggestions(
+                suggesting || showTypeahead -> {
+                    if (suggesting) searchSuggestions(
                         suggestions = suggestions,
                         // Picking one is done typing, so the keyboard comes down
                         // with it and the results get the whole screen.
@@ -350,8 +352,13 @@ fun SearchScreen(
                             item { MessageState(stringResource(Res.string.search_empty)) }
                         }
                     }
-                    if (genres.isNotEmpty()) {
-                        item { GenreGrid(genres = genres, onGenreClick = onGenreClick) }
+                    if (!searching && genres.isNotEmpty()) {
+                        itemsIndexed(
+                            items = genres.chunked(2),
+                            key = { index, row -> "genre-row:$index:${row.first().id}" },
+                        ) { _, row ->
+                            GenreGridRow(row = row, onGenreClick = onGenreClick)
+                        }
                     }
                     if (genres.isEmpty() && !searching) {
                         item { MessageState(stringResource(Res.string.search_empty)) }
@@ -1024,25 +1031,22 @@ private fun SearchResult.lazyContentType(): String = when (this) {
  * stable gradient of its own rather than a hole, so the wall is whole.
  */
 @Composable
-private fun GenreGrid(genres: List<GenreTile>, onGenreClick: (GenreTile) -> Unit) {
-    Column(
+private fun GenreGridRow(row: List<GenreTile>, onGenreClick: (GenreTile) -> Unit) {
+    Row(
         Modifier
             .fillMaxWidth()
-            .padding(horizontal = PAGE_GUTTER, vertical = 6.dp),
+            .padding(horizontal = PAGE_GUTTER)
+            .padding(bottom = AppleTokens.GridGutter),
     ) {
-        genres.chunked(2).forEach { row ->
-            Row(Modifier.fillMaxWidth().padding(bottom = AppleTokens.GridGutter)) {
-                row.forEachIndexed { index, genre ->
-                    GenreCard(
-                        genre = genre,
-                        modifier = Modifier.weight(1f),
-                        onClick = { onGenreClick(genre) },
-                    )
-                    if (index != row.lastIndex) Spacer(Modifier.width(AppleTokens.GridGutter))
-                }
-                if (row.size == 1) Spacer(Modifier.weight(1f))
-            }
+        row.forEachIndexed { index, genre ->
+            GenreCard(
+                genre = genre,
+                modifier = Modifier.weight(1f),
+                onClick = { onGenreClick(genre) },
+            )
+            if (index != row.lastIndex) Spacer(Modifier.width(AppleTokens.GridGutter))
         }
+        if (row.size == 1) Spacer(Modifier.weight(1f))
     }
 }
 

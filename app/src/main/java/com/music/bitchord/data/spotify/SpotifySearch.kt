@@ -6,6 +6,9 @@ import com.music.bitchord.data.model.BrowseType
 import com.music.bitchord.data.model.SearchFilter
 import com.music.bitchord.data.model.SearchResult
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.buildJsonObject
@@ -106,8 +109,22 @@ internal object SpotifySearch {
         // whose answers are known: `searchTracks` answers
         // `searchV2.tracksV2.items[].item.data`, and the others answer their
         // own section's `items[].data`.
-        for ((operation, tab) in tabOperations(filter)) {
-            val answer = ask(operation, tabVariables(query, tab, offset)) { failures += it }
+        val tabAnswers = coroutineScope {
+            tabOperations(filter).map { (operation, tab) ->
+                async {
+                    val operationFailures = mutableListOf<String>()
+                    val answer = ask(operation, tabVariables(query, tab, offset)) {
+                        operationFailures += it
+                    }
+                    Triple(operation, tab, answer to operationFailures)
+                }
+            }.awaitAll()
+        }
+        // Merge in the web player's tab order, not response order. The four independent
+        // operations run together, but fallback and diagnostics stay stable.
+        for ((operation, tab, answerAndFailures) in tabAnswers) {
+            val (answer, operationFailures) = answerAndFailures
+            failures += operationFailures
             val section = answer?.obj("searchV2") ?: answer ?: continue
             if (section.hasNothing()) {
                 Log.d(TAG, "Spotify's $operation answered an empty search")
@@ -560,6 +577,7 @@ internal object SpotifySearch {
         if (uri.startsWith(kind.uriPrefix)) return true
         if (str("__typename").equals(kind.typename, ignoreCase = true)) return true
         if (kind != EntityKind.TRACK) return false
+        if (isEntityOfAnotherKind(kind)) return false
         // The catalogue's older shape: no uri and no typename, a bare id and a
         // name, and the album or the runtime beside them. The album or the
         // runtime is what tells a track from an album in a list that states

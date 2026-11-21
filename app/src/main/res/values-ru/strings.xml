@@ -352,6 +352,11 @@
     <string name="no_internet_connection">Нет подключения к интернету</string>
     <string name="youtube_request_rejected">YouTube Music отклонил запрос. Попробуйте войти снова.</string>
     <string name="apple_request_rejected">Apple Music rejected the request. Check the Apple Music addon session and try again.</string>
+    <string name="apple_destination_unsupported">This Apple Music destination is not supported here</string>
+    <string name="apple_concert_geohash_hint">Four-letter geohash (for example, gcpv)</string>
+    <string name="apple_concerts_show">Show concerts</string>
+    <string name="apple_concerts_empty">No concerts found for this location</string>
+    <string name="apple_concert_ticket">Tickets</string>
     <string name="something_went_wrong">Что-то пошло не так</string>
     <string name="unknown_artist">Неизвестный исполнитель</string>
     <plurals name="downloads_failed_count">

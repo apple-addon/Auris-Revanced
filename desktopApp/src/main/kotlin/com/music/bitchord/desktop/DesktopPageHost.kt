@@ -411,8 +411,10 @@ internal fun DesktopPageHost(
             onSubmit = ::search,
             onSuggestionClick = ::runSearch,
             onHistoryClick = { entity ->
-                // Going back to a recent does not record it again, as on the phone.
-                when (entity.entityType) {
+                // Text recents rerun as queries; q: is never a playable id.
+                if (entity.entityType == EntityType.QUERY || entity.id.startsWith("q:")) {
+                    runSearch(entity.title)
+                } else when (entity.entityType) {
                     EntityType.TRACK -> playSong(
                         Song(
                             videoId = entity.id,
@@ -422,6 +424,7 @@ internal fun DesktopPageHost(
                         ),
                         source = DesktopQueueSource(entity.title, PlaybackSourceType.SEARCH),
                     )
+                    EntityType.QUERY -> Unit
                     EntityType.ARTIST -> openArtist(entity.id, entity.title)
                     EntityType.ALBUM, EntityType.PLAYLIST -> openBrowseItem(
                         BrowseItem(

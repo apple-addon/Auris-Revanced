@@ -191,6 +191,11 @@
     <string name="apple_library_empty_playlists">No playlists in your Apple Music library</string>
     <string name="apple_library_search_in">Find in %1$s</string>
     <string name="apple_request_rejected">Apple Music rejected the request. Check the Apple Music addon session and try again.</string>
+    <string name="apple_destination_unsupported">This Apple Music destination is not supported here</string>
+    <string name="apple_concert_geohash_hint">Four-letter geohash (for example, gcpv)</string>
+    <string name="apple_concerts_show">Show concerts</string>
+    <string name="apple_concerts_empty">No concerts found for this location</string>
+    <string name="apple_concert_ticket">Tickets</string>
     <string name="music_catalogue">Music catalogue</string>
     <string name="music_catalogue_row">Spotify or YouTube Music</string>
     <string name="music_catalogue_row_subtitle">Where Home and Search come from</string>

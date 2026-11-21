@@ -1,5 +1,6 @@
 package com.music.bitchord
 
+import com.music.bitchord.data.apple.AppleDestination
 import com.music.bitchord.data.apple.AppleEditorialItem
 import com.music.bitchord.data.apple.AppleEditorialLink
 import com.music.bitchord.data.apple.AppleEditorialShelf
@@ -191,11 +192,13 @@ class AppleEditorialMappingTest {
             id = "6745339928",
             kind = "391",
             title = "More to Explore",
+            destination = AppleDestination(kind = "room", id = "6456176470"),
             links = listOf(
                 AppleEditorialLink(
                     label = "Charts",
                     url = "https://music.apple.com/in/charts",
                     target = "charts",
+                    destination = AppleDestination(kind = "charts", id = "34", popId = "11"),
                 ),
                 AppleEditorialLink(label = "Invalid", url = "not-a-url"),
             ),
@@ -212,6 +215,11 @@ class AppleEditorialMappingTest {
         assertEquals("Charts", directory.links.single().label)
         assertEquals("https://music.apple.com/in/charts", directory.links.single().url)
         assertEquals("charts", directory.links.single().target)
+        assertEquals("charts", directory.links.single().destination?.kind)
+        assertEquals("34", directory.links.single().destination?.id)
+        assertEquals("11", directory.links.single().destination?.popId)
+        assertEquals("room", directory.destination?.kind)
+        assertEquals("6456176470", directory.destination?.id)
         assertEquals("6738239144", empty.id)
         assertEquals("compact", empty.displayStyle)
         assertEquals(emptyList<Nothing>(), empty.items)

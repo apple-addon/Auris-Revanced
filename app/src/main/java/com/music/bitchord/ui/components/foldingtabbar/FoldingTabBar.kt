@@ -139,6 +139,10 @@ fun FoldingTabBar(
     val searchGlassShown by remember {
         derivedStateOf { fold.value > 0f || search.value > 0f }
     }
+    // Flip only when the field appears/disappears, not on every animation frame.
+    val searchFieldComposed by remember {
+        derivedStateOf { search.value > 0f }
+    }
     val foldedOrSearching = folded || inSearch
     val noTap = remember { MutableInteractionSource() }
     val glowScope = rememberCoroutineScope()
@@ -254,7 +258,7 @@ fun FoldingTabBar(
                     .graphicsLayer { alpha = (search.value * (1f - fold.value)).coerceIn(0f, 1f) }
                     .then(if (!inSearch || folded) Modifier.clearAndSetSemantics {} else Modifier)
             ) {
-                if (inSearch || search.value > 0f) {
+                if (inSearch || searchFieldComposed) {
                     searchBarContent?.invoke(Modifier.fillMaxSize())
                 }
             }

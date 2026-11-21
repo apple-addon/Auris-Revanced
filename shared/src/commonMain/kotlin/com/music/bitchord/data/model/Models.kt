@@ -475,11 +475,23 @@ data class ShelfItem(
     val dateAdded: String? = null,
 )
 
+/** A typed Apple page opened inside the app, never inferred from a label. */
+data class AppleEditorialDestination(
+    val kind: String,
+    val id: String = "",
+    val popId: String = "",
+    val geo: String = "",
+    val route: String = "browse/destination",
+    /** "new" or "radio": which of Apple's layouts the destination came from. */
+    val presentation: String = "new",
+)
+
 /** A real destination from Apple's More to Explore editorial element. */
 data class AppleEditorialLink(
     val label: String,
     val url: String,
     val target: String = "",
+    val destination: AppleEditorialDestination? = null,
 )
 
 /**
@@ -495,6 +507,9 @@ data class AppleEditorialElement(
     val title: String,
     val items: List<ShelfItem> = emptyList(),
     val links: List<AppleEditorialLink> = emptyList(),
+    /** Apple's full chart id order, including ids with no preview lockup. */
+    val itemIds: List<String> = emptyList(),
+    val destination: AppleEditorialDestination? = null,
 )
 
 /**
@@ -523,6 +538,34 @@ data class AppleRadioRow(
 data class AppleRadioShelf(
     val title: String,
     val items: List<AppleRadioRow> = emptyList(),
+)
+
+/** One real concert from Apple's location-based hub. */
+data class AppleConcertEvent(
+    val id: String,
+    val name: String,
+    val startIso: String = "",
+    val endIso: String = "",
+    val timezone: String = "",
+    val artistName: String = "",
+    val artworkUrl: String? = null,
+    val venueName: String = "",
+    val address: String = "",
+    val ticketVendor: String = "",
+    val ticketUrl: String? = null,
+)
+
+data class AppleConcertContainer(
+    val id: String,
+    val title: String,
+    val href: String? = null,
+    val events: List<AppleConcertEvent> = emptyList(),
+)
+
+data class AppleConcertHub(
+    val locationRequired: Boolean,
+    val geoHashLocation: String? = null,
+    val containers: List<AppleConcertContainer> = emptyList(),
 )
 
 /**
@@ -746,6 +789,10 @@ data class DetailPage(
     val loadingMore: Boolean = false,
     /** Identifies one opening, so an older Apple response cannot fill a newer page. */
     val requestId: Long = 0,
+    /** Ordered room/grouping/chart elements for a More to Explore page. */
+    val editorialElements: List<AppleEditorialElement>? = null,
+    val editorialDestination: AppleEditorialDestination? = null,
+    val concertHub: AppleConcertHub? = null,
 )
 
 /**

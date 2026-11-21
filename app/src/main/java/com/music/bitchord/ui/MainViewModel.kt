@@ -171,9 +171,17 @@ enum class SearchSource {
          * drew YouTube first would put the chosen catalogue second, which is
          * the one place it could not be.
          */
+        private val catalogueOrder = listOf(APPLE, SPOTIFY, YOUTUBE)
+
         fun ordered(selected: SearchSource): List<SearchSource> {
-            val rest = entries.filter { it != selected && it != LIBRARY }
-            return listOf(selected) + rest + LIBRARY
+            if (selected == LIBRARY) return catalogueOrder + LIBRARY
+            return listOf(selected) + catalogueOrder.filter { it != selected } + LIBRARY
+        }
+
+        /** Fixed navigation cycle; unlike the selector, it never reorders under a tap. */
+        fun next(selected: SearchSource): SearchSource {
+            val cycle = catalogueOrder + LIBRARY
+            return cycle[(cycle.indexOf(selected) + 1) % cycle.size]
         }
     }
 }
@@ -2785,6 +2793,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         startSearchPipeline()
         startSuggestPipeline()
         startTypeaheadMediaPipeline()
+        startLiveCataloguePipeline()
         watchHomeShelfSettings()
         loadHome()
         // The podcasts page's own shelves, from the last launch, published
@@ -4001,7 +4010,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 title = q,
                 subtitle = "",
                 artworkUrl = null,
-                entityType = EntityType.TRACK,
+                entityType = EntityType.QUERY,
             ))
         }
     }
@@ -4018,11 +4027,26 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * a blank placeholder.
      */
     fun searchFor(term: String) {
-        _query.value = term
+        val query = term.trim()
+        if (query.isEmpty()) return
+        _query.value = query
         searchSubmitted = true
         _suggestions.value = emptyList()
         _typeaheadResults.value = emptyList()
+        recordQuery(query)
         runSearch()
+    }
+
+    private fun recordQuery(query: String) {
+        recordEntity(
+            SearchHistoryEntity(
+                id = "q:$query",
+                title = query,
+                subtitle = "",
+                artworkUrl = null,
+                entityType = EntityType.QUERY,
+            ),
+        )
     }
 
     fun removeSearch(id: String) = SearchHistory.remove(id)
@@ -4033,6 +4057,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _query.value = newValue
         if (newValue.isBlank()) {
             searchSubmitted = false
+            newestRequestId.incrementAndGet()
+            searchSession = null
+            _searchLoadingMore.value = false
             _suggestions.value = emptyList()
             _typeaheadResults.value = emptyList()
             _results.value = null
@@ -4048,16 +4075,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // The Library source answers from the device on every keystroke (see
         // [libraryResults]); YouTube's completions have nothing to add to it.
         if (_searchSource.value == SearchSource.LIBRARY) return
-        // Spotify's own completions are a different operation from YouTube
-        // Music's, and YouTube Music's completions under a Spotify search
-        // are answers from the wrong catalogue.
-        if (_searchSource.value == SearchSource.SPOTIFY) return
-        // Apple's completions are not read here either: the pipeline that
-        // would answer them is YouTube's, and YouTube's answers under an
-        // Apple search are answers from the wrong catalogue.
-        if (_searchSource.value == SearchSource.APPLE) return
-        // While typing, surface text completions — the pipeline already feeds
-        // them through [suggestRequests] and publishes results via typeahead.
+        // One immutable term feeds the source-appropriate live pipeline. Only
+        // YouTube shows its text completions; Apple and Spotify publish their
+        // own media results after the short debounce below.
         suggestRequests.tryEmit(newValue)
     }
 
@@ -4071,6 +4091,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         searchSubmitted = true
         _suggestions.value = emptyList()
         _typeaheadResults.value = emptyList()
+        recordQuery(q)
         runSearch()
     }
 
@@ -4090,17 +4111,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         when (source) {
             SearchSource.LIBRARY -> loadLibrarySongs()
             SearchSource.YOUTUBE -> submitSearch()
-            SearchSource.SPOTIFY -> {
-                // Spotify has no videos tab, and a filter the request does
-                // not honour is a filter that lies: the pill says one thing
-                // and the list answers another.
-                if (_filter.value == SearchFilter.VIDEOS) _filter.value = SearchFilter.ALL
-                submitSearch()
-            }
-            SearchSource.APPLE -> {
-                // Apple publishes no videos either, and its own filters are
-                // albums, playlists and artists rather than YouTube's.
-                if (_filter.value == SearchFilter.VIDEOS) _filter.value = SearchFilter.ALL
+            SearchSource.SPOTIFY, SearchSource.APPLE -> {
+                // Neither catalogue offers Videos or Podcasts here; retaining
+                // either would hide the selected pill and falsify the request.
+                if (_filter.value == SearchFilter.VIDEOS || _filter.value == SearchFilter.PODCASTS) {
+                    _filter.value = SearchFilter.ALL
+                }
                 submitSearch()
             }
         }
@@ -4147,6 +4163,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val filter: SearchFilter,
         val source: SearchSource,
         val requestId: Long,
+        /** Live typing publishes rows only; deliberate submission may warm playback. */
+        val prefetch: Boolean = true,
     )
 
     /**
@@ -4172,7 +4190,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             ?.rows
     }
 
-    private fun runSearch() {
+    private fun runSearch(prefetch: Boolean = true) {
         val query = _query.value
         if (query.isBlank()) {
             // Nothing in flight can still be waiting to overwrite this: the
@@ -4187,7 +4205,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _searchScrollReset.value += 1
         searchSession = null
         _searchLoadingMore.value = false
-        searchRequests.tryEmit(SearchRequest(query, _filter.value, _searchSource.value, id))
+        searchRequests.tryEmit(
+            SearchRequest(query, _filter.value, _searchSource.value, id, prefetch),
+        )
     }
 
     /**
@@ -4264,6 +4284,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                                 requestId = request.requestId,
                                 filter = request.filter,
                                 source = request.source,
+                                prefetch = request.prefetch,
                             )
                             if (published is UiState.Success) {
                                 published
@@ -4316,6 +4337,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                                 requestId = request.requestId,
                                 filter = request.filter,
                                 source = request.source,
+                                prefetch = request.prefetch,
                             )
                             if (published is UiState.Success) {
                                 published
@@ -4357,7 +4379,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 if (request.requestId != newestRequestId.get()) return@collectLatest
                 _results.value = result.fold(
                     onSuccess = { page ->
-                        published(page, key, request.requestId, request.filter, request.source)
+                        published(page, key, request.requestId, request.filter, request.source, request.prefetch)
                     },
                     onFailure = { failure -> UiState.Error(failure.friendly()) },
                 )
@@ -4508,7 +4530,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // moved on: typed further, or searched — which empties [_suggestions],
         // and a late answer writing to it would reopen the suggestions over
         // the results the user is by then reading.
-        fun stillWanted(input: String) = _query.value == input && !searchSubmitted
+        fun stillWanted(input: String) = _query.value == input && !searchSubmitted &&
+            _searchSource.value == SearchSource.YOUTUBE
 
         suggestRequests
             .debounce(SUGGEST_DEBOUNCE_MS)
@@ -4533,7 +4556,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         suggestRequests
             .debounce(TYPEAHEAD_MEDIA_DEBOUNCE_MS)
             .collectLatest { input ->
-                if (input.isBlank()) {
+                if (input.isBlank() || _searchSource.value != SearchSource.YOUTUBE) {
                     _typeaheadResults.value = emptyList()
                     return@collectLatest
                 }
@@ -4559,6 +4582,22 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
     }
 
+    /** Apple and Spotify search-as-you-type; only the latest term may publish. */
+    @OptIn(FlowPreview::class)
+    private fun startLiveCataloguePipeline() = viewModelScope.launch {
+        suggestRequests
+            .debounce(TYPEAHEAD_MEDIA_DEBOUNCE_MS)
+            .collectLatest { input ->
+                if (searchSubmitted || _query.value != input) return@collectLatest
+                if (_searchSource.value != SearchSource.APPLE &&
+                    _searchSource.value != SearchSource.SPOTIFY
+                ) {
+                    return@collectLatest
+                }
+                runSearch(prefetch = false)
+            }
+    }
+
     /** Caches and publishes the initial result page without waiting for later pages. */
     private fun published(
         page: YtMusicRepository.SearchPage,
@@ -4566,6 +4605,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         requestId: Long,
         filter: SearchFilter,
         source: SearchSource,
+        prefetch: Boolean,
     ): UiState<List<SearchResult>> = publishedRows(
         rows = page.rows,
         continuation = page.continuation,
@@ -4574,6 +4614,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         requestId = requestId,
         filter = filter,
         source = source,
+        prefetch = prefetch,
     )
 
     /**
@@ -4591,6 +4632,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         requestId: Long,
         filter: SearchFilter,
         source: SearchSource,
+        prefetch: Boolean = true,
     ): UiState<List<SearchResult>> {
         val clean = rows.withoutBlockedArtists()
         if (clean.isEmpty()) return UiState.Error(text(R.string.no_results))
@@ -4604,7 +4646,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             source = source,
             query = _query.value.trim(),
         )
-        prefetchTopResult(clean)
+        if (prefetch) prefetchTopResult(clean)
         return UiState.Success(clean)
     }
 
@@ -4725,7 +4767,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
          * The addon walks Apple's twenty-five-row pages on its side, so this
          * is the page the screen scrolls into, not the request behind it.
          */
-        private const val APPLE_SEARCH_PAGE = 100
+        private const val APPLE_SEARCH_PAGE = 25
 
         /** How many Spotify tracks are looked up on YouTube Music at once. */
         private const val SPOTIFY_MATCH_PARALLELISM = 6
@@ -4739,7 +4781,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
          * long enough that "cold" isn't four lookups, short enough that the
          * list is up by the time the thumb has left the key.
          */
-        const val SUGGEST_DEBOUNCE_MS = 180L
+        const val SUGGEST_DEBOUNCE_MS = 120L
 
         /**
          * Debounce for the parallel media-search pipeline. Slightly longer than
@@ -4747,7 +4789,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
          * full search is heavier than a suggestion request, and the UI only
          * needs a few results to fill the dropdown.
          */
-        const val TYPEAHEAD_MEDIA_DEBOUNCE_MS = 350L
+        const val TYPEAHEAD_MEDIA_DEBOUNCE_MS = 250L
 
         /**
          * Maximum number of live media results shown in the typeahead dropdown.
@@ -5321,6 +5363,85 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
     private fun appleLibraryEmptyMessage(collection: String): Int =
         if (collection == "playlists") R.string.apple_library_empty_playlists else R.string.apple_library_empty
+
+    /** Opens a directory link only when Apple supplied a supported typed destination. */
+    fun openAppleEditorialLink(
+        link: com.music.bitchord.data.model.AppleEditorialLink,
+        radio: Boolean = false,
+    ): Boolean {
+        val destination = link.destination ?: return false
+        if (destination.kind !in setOf("room", "grouping", "charts", "concerts")) return false
+        if (destination.kind != "concerts" && destination.id.isBlank()) return false
+        openAppleEditorialDestination(
+            destination = destination.copy(presentation = if (radio) "radio" else "new"),
+            title = link.label,
+        )
+        return true
+    }
+
+    fun openAppleEditorialDestination(
+        destination: com.music.bitchord.data.model.AppleEditorialDestination,
+        title: String,
+    ) {
+        val browseId = buildString {
+            append("apple:destination:")
+            append(destination.kind)
+            append(':')
+            append(destination.id)
+            append(':')
+            append(destination.popId)
+            if (destination.geo.isNotBlank()) append(':').append(destination.geo)
+        }
+        if (_detailStack.value.lastOrNull()?.browseId == browseId) return
+        val requestId = applePageRequests.incrementAndGet()
+        _detailStack.value += DetailPage(
+            browseId = browseId,
+            title = title,
+            subtitle = "",
+            thumbnailUrl = null,
+            songs = UiState.Loading,
+            type = BrowseType.OTHER,
+            editorialDestination = destination,
+            requestId = requestId,
+        )
+        viewModelScope.launch {
+            val handle = com.music.bitchord.data.apple.AppleSources.handle()
+            if (handle == null) {
+                setApplePage(
+                    browseId = browseId,
+                    songs = UiState.Error(text(R.string.provider_apple_manifest_missing_subtitle)),
+                    requestId = requestId,
+                )
+                return@launch
+            }
+            com.music.bitchord.data.apple.AppleSources.editorialDestination(handle, destination)
+                .onSuccess { content ->
+                    if (content.elements.isEmpty() && content.concertHub == null) {
+                        setApplePage(
+                            browseId = browseId,
+                            songs = UiState.Error(text(R.string.apple_browse_empty)),
+                            requestId = requestId,
+                        )
+                    } else {
+                        _detailStack.value = _detailStack.value.updateAppleRequest(browseId, requestId) {
+                            it.copy(
+                                title = content.title.ifBlank { title },
+                                songs = UiState.Success(emptyList()),
+                                editorialElements = content.elements,
+                                concertHub = content.concertHub,
+                            )
+                        }
+                    }
+                }
+                .onFailure { failure ->
+                    setApplePage(
+                        browseId = browseId,
+                        songs = UiState.Error(failure.friendly()),
+                        requestId = requestId,
+                    )
+                }
+        }
+    }
 
     /** A genre tile, opened as the editorial page Apple publishes for it. */
     fun openAppleGenre(curatorId: String, name: String, artworkUrl: String? = null) {

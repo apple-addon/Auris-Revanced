@@ -12,6 +12,7 @@ import com.music.bitchord.data.model.ShelfItem
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.sources.SourceRegistry
 import com.music.bitchord.data.sources.addon.AddonManifest
+import kotlinx.serialization.json.contentOrNull
 import java.time.Instant
 
 internal data class AppleEditorialDetails(
@@ -22,6 +23,12 @@ internal data class AppleEditorialDetails(
 internal data class AppleBrowseContent(
     val shelves: List<HomeShelf>,
     val elements: List<AppleEditorialElement>,
+)
+
+internal data class AppleDestinationContent(
+    val title: String,
+    val elements: List<AppleEditorialElement>,
+    val concertHub: com.music.bitchord.data.model.AppleConcertHub?,
 )
 
 internal data class AppleShelfPage(
@@ -313,6 +320,22 @@ internal object AppleSources {
             shelves.forEachIndexed { index, shelf -> add(shelf.toEditorialElement(handle, index)) }
         }
     }
+
+    /** Opens one of Apple's typed More to Explore destinations. */
+    suspend fun editorialDestination(
+        handle: Handle,
+        destination: com.music.bitchord.data.model.AppleEditorialDestination,
+    ): Result<AppleDestinationContent> =
+        AppleCatalogue.editorialDestination(handle.baseUrl, destination).map { page ->
+            AppleDestinationContent(
+                title = page.title,
+                elements = page.orderedElements(handle),
+                concertHub = page.concertHub?.toModel(
+                    locationRequired = page.locationRequired,
+                    geoHashLocation = page.geoHashLocation,
+                ),
+            )
+        }
 
     /** Apple's search-page genres; empty on an addon without the route. */
     suspend fun genres(handle: Handle): Result<List<AppleGenre>> =
@@ -641,10 +664,76 @@ internal fun AppleEditorialShelf.toEditorialElement(
         ) {
             null
         } else {
-            com.music.bitchord.data.model.AppleEditorialLink(link.label, link.url, link.target)
+            com.music.bitchord.data.model.AppleEditorialLink(
+                label = link.label,
+                url = link.url,
+                target = link.target,
+                destination = link.destination?.toModel(),
+            )
         }
     },
+    itemIds = itemIds,
+    destination = destination?.toModel(),
 )
+
+internal fun AppleDestination.toModel(): com.music.bitchord.data.model.AppleEditorialDestination =
+    com.music.bitchord.data.model.AppleEditorialDestination(
+        kind = kind,
+        id = id,
+        popId = popId,
+        geo = geo,
+        route = route,
+    )
+
+private fun AppleConcertHubWire.toModel(
+    locationRequired: Boolean,
+    geoHashLocation: String?,
+): com.music.bitchord.data.model.AppleConcertHub =
+    com.music.bitchord.data.model.AppleConcertHub(
+        locationRequired = locationRequired,
+        geoHashLocation = geoHashLocation,
+        containers = containers.map { container ->
+            com.music.bitchord.data.model.AppleConcertContainer(
+                id = container.id,
+                title = container.title,
+                href = container.href,
+                events = container.data.mapNotNull { event ->
+                    val attrs = event.attributes
+                    if (event.id.isBlank() || attrs.name.isBlank()) return@mapNotNull null
+                    val artist = event.relationships.artists.data.firstOrNull()?.attributes
+                    val venue = event.relationships.venues.data.firstOrNull()?.attributes
+                    val ticket = attrs.tickets.firstOrNull {
+                        it.url.startsWith("https://") || it.url.startsWith("http://")
+                    }
+                    com.music.bitchord.data.model.AppleConcertEvent(
+                        id = event.id,
+                        name = attrs.name,
+                        startIso = attrs.startIso,
+                        endIso = attrs.endIso,
+                        timezone = attrs.timezone,
+                        artistName = artist?.name.orEmpty(),
+                        artworkUrl = artist?.artwork?.url?.takeIf { it.isNotBlank() }
+                            ?: artist?.hero?.url?.takeIf { it.isNotBlank() },
+                        venueName = venue?.name.orEmpty(),
+                        address = venue?.structuredAddress.displayAddress(),
+                        ticketVendor = ticket?.vendor.orEmpty(),
+                        ticketUrl = ticket?.url,
+                    )
+                },
+            )
+        },
+    )
+
+private fun kotlinx.serialization.json.JsonObject?.displayAddress(): String {
+    if (this == null) return ""
+    return entries.mapNotNull { (key, value) ->
+        if (key.contains("latitude", true) || key.contains("longitude", true)) {
+            null
+        } else {
+            (value as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull
+        }
+    }.joinToString(", ")
+}
 
 /** The page this row opens, as the model the detail stack holds. */
 internal fun AppleItem.browseItem(): BrowseItem = BrowseItem(
