@@ -1,7 +1,11 @@
 package com.music.bitchord.ui.components
 
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
@@ -14,10 +18,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.LayoutCoordinates
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.platform.LocalGraphicsContext
+import com.music.bitchord.ui.motion.AppMotion
+import com.music.bitchord.ui.motion.rememberMotionMode
+import com.music.bitchord.data.settings.MotionMode
 import kotlinx.coroutines.launch
 
 /**
@@ -90,10 +98,19 @@ fun Modifier.longPressMenuClickable(
     val capture = remember { HoldCapture() }
     val graphicsContext = LocalGraphicsContext.current
     val scope = rememberCoroutineScope()
+    val interactionSource = remember { MutableInteractionSource() }
+    val pressed by interactionSource.collectIsPressedAsState()
+    val motionMode = rememberMotionMode()
+    val press by animateFloatAsState(
+        targetValue = if (pressed && motionMode != MotionMode.OFF) 1f else 0f,
+        animationSpec = AppMotion.tween(motionMode, fullMs = 140, reducedMs = 90),
+        label = "heldItemPress",
+    )
     val longClick = onLongClick?.let { held ->
         {
             capture.coordinates?.takeIf { it.isAttached }?.let { coordinates ->
-                val item = HeldItem(coordinates.boundsInWindow())
+                // Graphics scale never changes layout or the flight's rest origin.
+                val item = HeldItem(capture.restBounds ?: coordinates.boundsInWindow())
                 LongPressOrigin.record(item)
                 capture.pending = item
                 capture.requests++
@@ -102,8 +119,22 @@ fun Modifier.longPressMenuClickable(
         }
     }
     return this
-        .onPlaced { capture.coordinates = it }
-        .combinedClickable(enabled = enabled, onClick = onClick, onLongClick = longClick)
+        .onPlaced {
+            capture.coordinates = it
+            capture.restBounds = it.boundsInWindow()
+        }
+        .graphicsLayer {
+            val scale = 1f - (1f - AppMotion.PRESS_SCALE) * press
+            scaleX = scale
+            scaleY = scale
+        }
+        .combinedClickable(
+            enabled = enabled,
+            onClick = onClick,
+            onLongClick = longClick,
+            interactionSource = interactionSource,
+            indication = LocalIndication.current,
+        )
         .drawWithContent {
             drawContent()
             // Reading the counter is what subscribes this draw to a hold;
@@ -127,6 +158,7 @@ fun Modifier.longPressMenuClickable(
 
 private class HoldCapture {
     var coordinates: LayoutCoordinates? = null
+    var restBounds: Rect? = null
     var pending: HeldItem? = null
     /** Read while drawing, so bumping it is what asks for a frame to record. */
     var requests by mutableIntStateOf(0)

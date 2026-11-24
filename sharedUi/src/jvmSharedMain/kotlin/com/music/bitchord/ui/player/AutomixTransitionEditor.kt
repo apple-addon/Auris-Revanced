@@ -478,6 +478,12 @@ internal fun AutomixTransitionEditor(
     val liveViewStart by rememberUpdatedState(viewStart)
     val liveViewEnd by rememberUpdatedState(viewEnd)
 
+    // Mapping and filtering a whole track is independent of the viewport. Keep
+    // one cache per lane so panning and animation only redo the columns, while
+    // a digest or lane-placement change still rebuilds exactly what it affects.
+    val outgoingWaveformCache = remember(resetKey) { WaveformSampleCache() }
+    val incomingWaveformCache = remember(resetKey) { WaveformSampleCache() }
+
     val graphModifier = if (!enabled || barSeconds <= 0.0) {
         modifier
     } else {
@@ -824,6 +830,8 @@ internal fun AutomixTransitionEditor(
             from = from,
             span = span,
             mapToAxis = { it },
+            sampleCache = outgoingWaveformCache,
+            mappingKey = null,
         )
         if (hasNext) {
             drawWaveform(
@@ -833,6 +841,11 @@ internal fun AutomixTransitionEditor(
                 from = from,
                 span = span,
                 mapToAxis = incomingMap,
+                sampleCache = incomingWaveformCache,
+                // The origin is the complete lane mapping: reusing the lambda's
+                // identity would miss on every draw, and omitting it would show
+                // the arriving track at its previous placement after a drag.
+                mappingKey = origin,
             )
         }
 
@@ -1004,6 +1017,8 @@ private fun DrawScope.drawWaveform(
     from: Double,
     span: Double,
     mapToAxis: (Double) -> Double,
+    sampleCache: WaveformSampleCache,
+    mappingKey: Any?,
 ) {
     val columns = size.width.toInt().coerceAtLeast(1)
     val grid = waveformColumns(
@@ -1013,6 +1028,8 @@ private fun DrawScope.drawWaveform(
         span = span,
         columns = columns,
         mapToAxis = mapToAxis,
+        sampleCache = sampleCache,
+        mappingKey = mappingKey,
     )
     val mid = laneTop + laneHeight / 2f
     val amplitude = laneHeight * 0.46f
@@ -1052,37 +1069,88 @@ internal class WaveformColumns(
 )
 
 /**
- * The curve, read onto the drawing's columns.
+ * The valid samples of one digest, mapped onto one lane's axis.
  *
- * A column takes the loudest sample that lands in it, and the average of the
- * samples that do. A column with no sample of its own is filled from the two
- * samples around it, so a curve that is sparser than the drawing still reads
- * as a shape rather than as a dotted line; a column whose neighbours are more
- * than [maxGapSeconds] apart is left empty, because that is a stretch nobody
- * measured rather than a pixel nobody sampled.
+ * These arrays are the expensive, viewport-independent part of drawing. They
+ * are built only when the source lists or the mapping key changes; reading a
+ * new viewport never reallocates or rescans the full track just to map it.
+ * [order] is null for the usual monotonic curve and is the same stable axis
+ * sort the original drawing used for a reversed or reordered curve.
  */
-internal fun waveformColumns(
+internal class WaveformSamples internal constructor(
+    val size: Int,
+    private val axes: DoubleArray,
+    private val values: FloatArray,
+    private val order: IntArray?,
+) {
+    val ordered: Boolean get() = order == null
+
+    fun axisAt(position: Int): Double = axes[order?.get(position) ?: position]
+
+    fun valueAt(position: Int): Float = values[order?.get(position) ?: position]
+
+    /** First position whose axis is not before [value]. Ordered samples only. */
+    fun lowerBound(value: Double): Int {
+        var low = 0
+        var high = size
+        while (low < high) {
+            val middle = (low + high).ushr(1)
+            if (axisAt(middle) < value) low = middle + 1 else high = middle
+        }
+        return low
+    }
+
+    /** First position whose axis is after [value]. Ordered samples only. */
+    fun upperBound(value: Double): Int {
+        var low = 0
+        var high = size
+        while (low < high) {
+            val middle = (low + high).ushr(1)
+            if (axisAt(middle) <= value) low = middle + 1 else high = middle
+        }
+        return low
+    }
+}
+
+/**
+ * A single-lane cache of [WaveformSamples].
+ *
+ * A key is explicit because a new lambda is created by drawing even when its
+ * meaning has not changed. The outgoing lane uses a constant key; the arriving
+ * lane uses its origin. Source lists are compared by identity, both to avoid an
+ * O(track) equality check on every frame and because a digest's curves are
+ * immutable snapshots. Separate lane caches prevent one lane evicting the other.
+ */
+internal class WaveformSampleCache {
+    private var sourcePeaks: List<Float>? = null
+    private var sourceTimes: List<Double>? = null
+    private var sourceMappingKey: Any? = null
+    private var cached: WaveformSamples? = null
+
+    fun samples(
+        peaks: List<Float>,
+        times: List<Double>,
+        mappingKey: Any?,
+        mapToAxis: (Double) -> Double,
+    ): WaveformSamples {
+        cached?.let {
+            if (sourcePeaks === peaks && sourceTimes === times && sourceMappingKey == mappingKey) return it
+        }
+        return mapWaveformSamples(peaks, times, mapToAxis).also {
+            sourcePeaks = peaks
+            sourceTimes = times
+            sourceMappingKey = mappingKey
+            cached = it
+        }
+    }
+}
+
+/** Map, validate and (only when necessary) stably sort one immutable curve. */
+private fun mapWaveformSamples(
     peaks: List<Float>,
     times: List<Double>,
-    from: Double,
-    span: Double,
-    columns: Int,
     mapToAxis: (Double) -> Double,
-    maxGapSeconds: Double = WAVEFORM_MAX_GAP_SECONDS,
-): WaveformColumns {
-    val count = columns.coerceAtLeast(1)
-    val tops = FloatArray(count)
-    val bodies = FloatArray(count)
-    val filled = BooleanArray(count)
-    if (peaks.isEmpty() || times.isEmpty() || span <= 0.0) return WaveformColumns(tops, bodies, filled)
-
-    // The samples along the drawing's own axis, in order. The axis is the
-    // outgoing track's clock for both lanes — the arriving one is laid on it —
-    // so this is the order the columns are read in.
-    //
-    // Two flat arrays rather than a list of pairs: this runs on every frame of
-    // a drag, and a drag is exactly when the app must not be collecting
-    // rubbish.
+): WaveformSamples {
     val axes = DoubleArray(peaks.size)
     val values = FloatArray(peaks.size)
     var samples = 0
@@ -1100,25 +1168,65 @@ internal fun waveformColumns(
         values[samples] = value.coerceIn(0f, 1f)
         samples++
     }
-    if (samples == 0) return WaveformColumns(tops, bodies, filled)
-    // The curve is in order already unless something has reordered it, and the
-    // sort is only paid for when it is needed.
-    val order: Array<Int>? = if (ordered) {
+    val order = if (ordered) {
         null
     } else {
-        IntArray(samples) { it }.toList().sortedBy { axes[it] }.toTypedArray()
+        // sortedBy is stable, including for samples that share an axis. Keeping
+        // that order also keeps each column's floating-point average identical.
+        IntArray(samples) { it }.toList().sortedBy { axes[it] }.toIntArray()
     }
-    fun axisAt(position: Int): Double = axes[order?.get(position) ?: position]
-    fun valueAt(position: Int): Float = values[order?.get(position) ?: position]
+    return WaveformSamples(samples, axes, values, order)
+}
+
+/**
+ * The curve, read onto the drawing's columns.
+ *
+ * A column takes the loudest sample that lands in it, and the average of the
+ * samples that do. A column with no sample of its own is filled from the two
+ * samples around it, so a curve that is sparser than the drawing still reads
+ * as a shape rather than as a dotted line; a column whose neighbours are more
+ * than [maxGapSeconds] apart is left empty, because that is a stretch nobody
+ * measured rather than a pixel nobody sampled.
+ *
+ * Ordered curves use binary searches to aggregate only the visible range and
+ * to find interpolation neighbours. Reordered curves retain the full-scan
+ * fallback over their cached stable sort. Non-finite viewport arithmetic also
+ * uses that fallback, preserving the original coercion and comparison rules.
+ */
+internal fun waveformColumns(
+    peaks: List<Float>,
+    times: List<Double>,
+    from: Double,
+    span: Double,
+    columns: Int,
+    mapToAxis: (Double) -> Double,
+    maxGapSeconds: Double = WAVEFORM_MAX_GAP_SECONDS,
+    sampleCache: WaveformSampleCache? = null,
+    mappingKey: Any? = mapToAxis,
+): WaveformColumns {
+    val count = columns.coerceAtLeast(1)
+    val tops = FloatArray(count)
+    val bodies = FloatArray(count)
+    val filled = BooleanArray(count)
+    if (peaks.isEmpty() || times.isEmpty() || span <= 0.0) return WaveformColumns(tops, bodies, filled)
+
+    val samples = sampleCache?.samples(peaks, times, mappingKey, mapToAxis)
+        ?: mapWaveformSamples(peaks, times, mapToAxis)
+    if (samples.size == 0) return WaveformColumns(tops, bodies, filled)
+    val last = from + span
+    val useBinarySearch = samples.ordered && from.isFinite() && span.isFinite() && last.isFinite()
 
     val sums = DoubleArray(count)
     val counts = IntArray(count)
-    for (sample in 0 until samples) {
-        val index = order?.get(sample) ?: sample
-        val axis = axes[index]
-        if (axis < from || axis > from + span) continue
+    val firstVisible = if (useBinarySearch) samples.lowerBound(from) else 0
+    val endVisible = if (useBinarySearch) samples.upperBound(last) else samples.size
+    for (position in firstVisible until endVisible) {
+        val axis = samples.axisAt(position)
+        // Keep the exact inclusive viewport test even after a binary search:
+        // rounding at an edge must not move a sample into an adjacent column.
+        if (axis < from || axis > last) continue
         val column = (((axis - from) / span) * count).toInt().coerceIn(0, count - 1)
-        val value = values[index]
+        val value = samples.valueAt(position)
         if (value > tops[column]) tops[column] = value
         sums[column] += value
         counts[column] += 1
@@ -1130,21 +1238,30 @@ internal fun waveformColumns(
     }
 
     // The columns with no sample of their own, filled from the two samples
-    // around them.
-    var index = 0
+    // around them. upperBound(position) - 1 is exactly where the old forward
+    // scan stopped, including duplicate axes and positions outside the curve.
+    var fallbackIndex = 0
     for (column in 0 until count) {
         if (filled[column]) continue
         val position = from + (column + 0.5) / count * span
-        while (index < samples - 1 && axisAt(index + 1) <= position) index++
+        val index = if (useBinarySearch) {
+            (samples.upperBound(position) - 1).coerceAtLeast(0)
+        } else {
+            while (fallbackIndex < samples.size - 1 && samples.axisAt(fallbackIndex + 1) <= position) {
+                fallbackIndex++
+            }
+            fallbackIndex
+        }
         // Nothing after the last sample to interpolate towards.
-        if (index + 1 >= samples) continue
-        val left = axisAt(index)
-        val right = axisAt(index + 1)
+        if (index + 1 >= samples.size) continue
+        val left = samples.axisAt(index)
+        val right = samples.axisAt(index + 1)
         if (position < left || position > right) continue
         val gap = right - left
         if (gap <= 0.0 || gap > maxGapSeconds) continue
         val ratio = ((position - left) / gap).toFloat()
-        val value = valueAt(index) + (valueAt(index + 1) - valueAt(index)) * ratio
+        val value = samples.valueAt(index) +
+            (samples.valueAt(index + 1) - samples.valueAt(index)) * ratio
         tops[column] = value
         bodies[column] = value
         filled[column] = true

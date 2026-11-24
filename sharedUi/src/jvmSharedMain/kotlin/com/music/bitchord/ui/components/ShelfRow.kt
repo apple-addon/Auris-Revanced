@@ -1,6 +1,8 @@
 package com.music.bitchord.ui.components
 
 import androidx.compose.foundation.gestures.FlingBehavior
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.snapping.SnapLayoutInfoProvider
 import androidx.compose.foundation.gestures.snapping.SnapPosition
 import androidx.compose.foundation.gestures.snapping.rememberSnapFlingBehavior
@@ -14,6 +16,14 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollDispatcher
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChangeIgnoreConsumed
+import kotlin.math.abs
 
 /**
  * What a sideways shelf is wrapped in, on top of the row itself.
@@ -66,7 +76,7 @@ fun ShelfRow(
     val flingBehavior = rememberShelfFlingBehavior(state, snap)
     LocalShelfRowChrome.current.Wrap(state) {
         LazyRow(
-            modifier = modifier,
+            modifier = modifier.verticalShelfPassThrough(),
             state = state,
             contentPadding = contentPadding,
             horizontalArrangement = horizontalArrangement,
@@ -74,6 +84,83 @@ fun ShelfRow(
             content = content,
         )
     }
+}
+
+/**
+ * Hands the page its vertical share of a drag that began on a sideways shelf.
+ *
+ * A row's drag consumes the pointer stream once it starts horizontally, so the
+ * page's own vertical drag gives up. That is fine while the finger stays level,
+ * but a finger that turns upwards should move both: the row keeps its axis and
+ * the page gets the other. The row dispatches only after horizontal movement
+ * has claimed the gesture, so a straight vertical drag still belongs to the
+ * page and is never driven twice.
+ */
+@Composable
+internal fun Modifier.verticalShelfPassThrough(): Modifier {
+    val dispatcher = remember { NestedScrollDispatcher() }
+    val connection = remember { object : NestedScrollConnection {} }
+    return this
+        .nestedScroll(connection, dispatcher)
+        .pointerInput(dispatcher) {
+            awaitEachGesture {
+                val down = awaitFirstDown(requireUnconsumed = false)
+                val touchSlop = viewConfiguration.touchSlop
+                var totalX = 0f
+                var totalY = 0f
+                var passedY = 0f
+                var horizontalHasGesture = false
+                // Vertical won the gesture before the row did: the page already
+                // owns it, and passing it here too would scroll twice.
+                var pageOwnsVertical = false
+                var passingVertical = false
+                while (true) {
+                    val event = awaitPointerEvent()
+                    val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                    // The row consumes its horizontal changes; the raw movement is
+                    // what tells us the finger has turned vertical.
+                    val delta = change.positionChangeIgnoreConsumed()
+                    totalX += delta.x
+                    totalY += delta.y
+
+                    if (!horizontalHasGesture && !pageOwnsVertical) {
+                        if (abs(totalX) > touchSlop && abs(totalX) > abs(totalY)) {
+                            horizontalHasGesture = true
+                        } else if (abs(totalY) > touchSlop) {
+                            pageOwnsVertical = true
+                        }
+                    }
+                    if (horizontalHasGesture && !pageOwnsVertical) {
+                        if (!passingVertical && abs(totalY) > touchSlop) {
+                            passingVertical = true
+                        }
+                        if (passingVertical) {
+                            // Send the whole vertical travel, including the
+                            // slop that brought us here, so the page starts
+                            // moving on this frame rather than the next.
+                            val wanted = totalY - passedY
+                            if (wanted != 0f) {
+                                val available = Offset(0f, wanted)
+                                val pre = dispatcher.dispatchPreScroll(
+                                    available,
+                                    NestedScrollSource.UserInput,
+                                )
+                                val remaining = available - pre
+                                if (remaining.y != 0f) {
+                                    dispatcher.dispatchPostScroll(
+                                        consumed = Offset.Zero,
+                                        available = remaining,
+                                        source = NestedScrollSource.UserInput,
+                                    )
+                                }
+                                passedY = totalY
+                            }
+                        }
+                    }
+                    if (!change.pressed) break
+                }
+            }
+        }
 }
 
 /**

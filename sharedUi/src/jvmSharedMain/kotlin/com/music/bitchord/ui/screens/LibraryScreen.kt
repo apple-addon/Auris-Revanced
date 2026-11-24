@@ -28,11 +28,13 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyListState
 import com.music.bitchord.ui.components.ShelfRow
 import com.music.bitchord.ui.components.longPressMenuClickable
@@ -42,7 +44,10 @@ import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import com.music.bitchord.ui.components.LazyContent
+import com.music.bitchord.ui.components.lazyKey
 import com.music.bitchord.ui.components.rememberShelfKeys
+import com.music.bitchord.ui.components.uniqueKeys
+import com.music.bitchord.ui.components.verticalShelfPassThrough
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -76,6 +81,9 @@ import com.music.bitchord.ui.components.PullToRefresh
 import com.music.bitchord.ui.components.SHELF_CARD_WIDTH
 import com.music.bitchord.ui.components.libraryGrid
 import com.music.bitchord.ui.components.librarySkeleton
+import com.music.bitchord.ui.motion.AppMotion
+import com.music.bitchord.ui.motion.rememberMotionMode
+import com.music.bitchord.data.settings.MotionMode
 
 /**
  * The signed-in library: the saved collections, as shelves of cards.
@@ -185,6 +193,7 @@ fun LibraryScreen(
     onSegmentChange: ((LibrarySegment) -> Unit)? = null,
 ) {
     val pinnedPlaylists by AppUi.host.pinnedPlaylists.collectAsStateWithLifecycle()
+    val playlistsViewType by AppUi.host.libraryPlaylistsViewType.collectAsStateWithLifecycle()
     val onDevice = stringResource(Res.string.on_device)
     // Playlists, not the device's own shelf. This is what a signed-in
     // listener came to this page for, and it is what the page's own doc
@@ -297,17 +306,16 @@ fun LibraryScreen(
                 LibrarySegment.Playlists -> {
                     val playlists = shelfNamed(PLAYLISTS)
                     if (playlists != null || !signedIn) {
-                        item(key = "shelf:$PLAYLISTS", contentType = LazyContent.SHELF) {
-                            val shelf = filtered(playlists ?: HomeShelf(PLAYLISTS, emptyList()))
-                            PlaylistShelf(
-                                shelf = shelf,
-                                onItemClick = onShelfItemClick,
-                                onItemLongPress = onShelfItemLongPress,
-                                onNewPlaylist = onNewPlaylist,
-                                onShowAll = { onShowAll(shelf) },
-                                pinnedPlaylists = pinnedPlaylists,
-                            )
-                        }
+                        val shelf = filtered(playlists ?: HomeShelf(PLAYLISTS, emptyList()))
+                        playlistShelf(
+                            shelf = shelf,
+                            viewType = playlistsViewType,
+                            onItemClick = onShelfItemClick,
+                            onItemLongPress = onShelfItemLongPress,
+                            onNewPlaylist = onNewPlaylist,
+                            onShowAll = { onShowAll(shelf) },
+                            pinnedPlaylists = pinnedPlaylists,
+                        )
                     }
                     // The account's saved podcasts are saved things, and they
                     // are shelves of the same kind as the playlists.
@@ -431,7 +439,8 @@ private fun LibrarySegmentBar(
         Row(
             modifier = Modifier
                 .weight(1f, fill = false)
-                .horizontalScroll(rememberScrollState()),
+                .horizontalScroll(rememberScrollState())
+                .verticalShelfPassThrough(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
@@ -568,60 +577,72 @@ private val LINK_ICON_GAP = 16.dp
  * a grid of squares says nothing about how many tracks are in a playlist or
  * when it was last touched, and the names are what a listener with thirty
  * playlists is looking for. So the shelf can be either, and the switch is at
- * the end of its heading.
+ * the end of its heading. List rows are items of the page itself, so only the
+ * visible ones are composed.
  */
-@Composable
-private fun PlaylistShelf(
+private fun LazyListScope.playlistShelf(
     shelf: HomeShelf,
+    viewType: LibraryViewType,
     onItemClick: (ShelfItem) -> Unit,
     onItemLongPress: (ShelfItem) -> Unit,
     onNewPlaylist: () -> Unit,
     onShowAll: () -> Unit,
     pinnedPlaylists: List<String> = emptyList(),
 ) {
-    val viewType by AppUi.host.libraryPlaylistsViewType.collectAsStateWithLifecycle()
     val toggle = {
         val next = if (viewType == LibraryViewType.GRID) LibraryViewType.LIST else LibraryViewType.GRID
         AppUi.host.setLibraryPlaylistsViewType(next)
     }
 
     if (viewType == LibraryViewType.LIST) {
-        Column(Modifier.padding(bottom = 26.dp)) {
+        val keys = uniqueKeys(shelf.items, ShelfItem::lazyKey)
+        val pinned = pinnedPlaylists.toHashSet()
+        item(key = "shelf:$PLAYLISTS", contentType = LazyContent.HEADER) {
             SectionHeader(
                 title = shelf.title,
                 subtitle = shelf.subtitle,
                 trailing = { ViewTypeToggle(viewType = viewType, onToggle = toggle) },
             )
-            Column(Modifier.padding(horizontal = PAGE_GUTTER)) {
-                NewPlaylistRow(onClick = onNewPlaylist)
-                shelf.items.forEach { item ->
-                    PlaylistListRow(
-                        item = item,
-                        isPinned = item.browseId != null && item.browseId in pinnedPlaylists,
-                        onClick = { onItemClick(item) },
-                        onLongPress = { onItemLongPress(item) },
-                    )
-                }
-            }
+        }
+        item(key = "shelf:$PLAYLISTS:new", contentType = LazyContent.LEADING_CARD) {
+            NewPlaylistRow(onClick = onNewPlaylist, modifier = Modifier.padding(horizontal = PAGE_GUTTER))
+        }
+        itemsIndexed(
+            items = shelf.items,
+            key = { index, _ -> "shelf:$PLAYLISTS:item:${keys[index]}" },
+            contentType = { _, _ -> LazyContent.BROWSE_ROW },
+        ) { _, item ->
+            PlaylistListRow(
+                item = item,
+                isPinned = item.browseId != null && item.browseId in pinned,
+                onClick = { onItemClick(item) },
+                onLongPress = { onItemLongPress(item) },
+                modifier = Modifier.padding(horizontal = PAGE_GUTTER),
+            )
+        }
+        item(key = "shelf:$PLAYLISTS:bottom", contentType = "spacer") {
+            Spacer(Modifier.height(26.dp))
         }
         return
     }
 
-    LibraryGridShelf(
-        shelf = shelf,
-        onItemClick = onItemClick,
-        onItemLongPress = onItemLongPress,
-        onShowAll = onShowAll,
-        pinnedPlaylists = pinnedPlaylists,
-        leadingCard = {
-            NewShelfCard(
-                icon = BitChordIcons.Plus,
-                label = stringResource(Res.string.new_playlist),
-                subtitle = stringResource(Res.string.saved_to_youtube_music),
-                onClick = onNewPlaylist,
-            )
-        },
-    )
+    item(key = "shelf:$PLAYLISTS", contentType = LazyContent.SHELF) {
+        LibraryGridShelf(
+            shelf = shelf,
+            onItemClick = onItemClick,
+            onItemLongPress = onItemLongPress,
+            onShowAll = onShowAll,
+            pinnedPlaylists = pinnedPlaylists,
+            leadingCard = {
+                NewShelfCard(
+                    icon = BitChordIcons.Plus,
+                    label = stringResource(Res.string.new_playlist),
+                    subtitle = stringResource(Res.string.saved_to_youtube_music),
+                    onClick = onNewPlaylist,
+                )
+            },
+        )
+    }
 }
 
 /**
@@ -659,10 +680,10 @@ internal fun ViewTypeToggle(viewType: LibraryViewType, onToggle: () -> Unit) {
 
 /** "New playlist", as a row rather than a tile. */
 @Composable
-private fun NewPlaylistRow(onClick: () -> Unit) {
+private fun NewPlaylistRow(onClick: () -> Unit, modifier: Modifier = Modifier) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
             .padding(vertical = 8.dp),
@@ -708,10 +729,11 @@ private fun PlaylistListRow(
     isPinned: Boolean,
     onClick: () -> Unit,
     onLongPress: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .longPressMenuClickable(onClick = onClick, onLongClick = onLongPress)
             .padding(vertical = 6.dp),
@@ -770,7 +792,7 @@ private const val LIBRARY_ROW_MAX_ITEMS = 5
  * vertically-scrolling grid instead. See [LibraryGridPage].
  *
  * [leadingCard], if given, occupies the first slot and counts against that
- * cap — see [PlaylistShelf].
+ * cap — see [playlistShelf].
  */
 @Composable
 internal fun LibraryGridShelf(
@@ -837,6 +859,7 @@ fun LibraryGridPage(
     // immediately rather than waiting for the row underneath to be revisited.
     val pinnedPlaylists by AppUi.host.pinnedPlaylists.collectAsStateWithLifecycle()
     val librarySort by AppUi.host.librarySort.collectAsStateWithLifecycle()
+    val motionMode = rememberMotionMode()
     // Pinning wins over the default order, but an explicit sort is a stronger,
     // more deliberate signal than a pin and is left to reorder the whole grid,
     // pinned cards included.
@@ -881,7 +904,19 @@ fun LibraryGridPage(
                     item = item,
                     onClick = { onItemClick(item) },
                     onLongPress = { onItemLongPress(item) },
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .then(
+                            if (motionMode == MotionMode.OFF) {
+                                Modifier
+                            } else {
+                                Modifier.animateItem(
+                                    fadeInSpec = null,
+                                    fadeOutSpec = null,
+                                    placementSpec = AppMotion.tween(motionMode),
+                                )
+                            },
+                        ),
                     isPinned = item.browseId != null && item.browseId in pinned,
                 )
             }
@@ -918,7 +953,7 @@ private fun HomeShelf.sortedForLibrary(sort: LibrarySort): HomeShelf = when (sor
     )
 }
 
-/** The library feed whose cards are the account's own — see [PlaylistShelf]. */
+/** The library feed whose cards are the account's own — see [playlistShelf]. */
 private const val PLAYLISTS = YtMusicRepository.PLAYLISTS_SHELF
 
 /** The album shelf of the library feed. */

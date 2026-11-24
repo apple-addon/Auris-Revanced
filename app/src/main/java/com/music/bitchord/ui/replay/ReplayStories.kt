@@ -48,8 +48,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
@@ -77,6 +79,7 @@ import com.music.bitchord.ui.player.MeshGradientBackground
 import com.music.bitchord.ui.player.MeshPalette
 import com.music.bitchord.ui.player.rememberArtworkColors
 import com.music.bitchord.ui.theme.AccentRed
+import com.music.bitchord.ui.rememberIsForeground
 import kotlinx.coroutines.launch
 
 /**
@@ -184,8 +187,9 @@ fun ReplayStories(
     }
 
     LaunchedEffect(current) { progress.snapTo(0f) }
-    LaunchedEffect(current, held, paused) {
-        if (held || paused) return@LaunchedEffect
+    val foreground = rememberIsForeground()
+    LaunchedEffect(current, held, paused, foreground) {
+        if (held || paused || !foreground) return@LaunchedEffect
         // On the final slide: animate progress to 1f then close the replay.
         if (current == pages.lastIndex) {
             progress.animateTo(1f, tween(PAGE_MILLIS.toInt(), easing = LinearEasing))
@@ -348,7 +352,7 @@ private fun Stage(
             label = summary.localizedLabel(LocalContext.current),
             count = pages.size,
             current = current,
-            progress = progress.value,
+            progress = { progress.value },
             onClose = onClose,
         )
     }
@@ -367,7 +371,7 @@ private fun StoryChrome(
     label: String,
     count: Int,
     current: Int,
-    progress: Float,
+    progress: () -> Float,
     onClose: () -> Unit,
 ) {
     Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp)) {
@@ -387,10 +391,12 @@ private fun StoryChrome(
         Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
             repeat(count) { index ->
                 Segment(
-                    fraction = when {
-                        index < current -> 1f
-                        index > current -> 0f
-                        else -> progress
+                    fraction = {
+                        when {
+                            index < current -> 1f
+                            index > current -> 0f
+                            else -> progress()
+                        }
                     },
                     modifier = Modifier.weight(1f),
                 )
@@ -431,20 +437,17 @@ private fun StoryChrome(
 }
 
 @Composable
-private fun Segment(fraction: Float, modifier: Modifier = Modifier) {
+private fun Segment(fraction: () -> Float, modifier: Modifier = Modifier) {
     Box(
         modifier
             .height(2.5.dp)
             .clip(RoundedCornerShape(2.dp))
-            .background(Color.White.copy(alpha = 0.28f)),
-    ) {
-        Box(
-            Modifier
-                .fillMaxWidth(fraction.coerceIn(0f, 1f))
-                .height(2.5.dp)
-                .background(Color.White),
-        )
-    }
+            .drawBehind {
+                drawRect(Color.White.copy(alpha = 0.28f))
+                val filled = fraction().coerceIn(0f, 1f)
+                drawRect(Color.White, size = Size(size.width * filled, size.height))
+            },
+    )
 }
 
 // ── One card ────────────────────────────────────────────────────────────────

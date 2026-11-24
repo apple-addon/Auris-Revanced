@@ -61,7 +61,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
@@ -446,28 +445,15 @@ fun SettingsScreen(
 @Composable
 private fun rememberSettingsScroll(scrollPage: String, searchQuery: String): ScrollState {
     val searchActive = searchQuery.isNotBlank()
-    // A fresh scroll state per page, so one page's offset never carries into
-    // another.
-    val scrollState = rememberSaveable(scrollPage, saver = ScrollState.Saver) { ScrollState(0) }
-    // Where this page was left the last time it was closed. Read once, when
-    // the page opens, on purpose: the restore below may wait for a first
-    // layout, and meanwhile the scroll saver can already have written the
-    // unrestored top (0) back, which a fresh read would then restore.
+    // Read before creating the state: initialising at zero and restoring after
+    // first layout made every return from a subpage visibly jump from the top.
     val restoredOffset = remember(scrollPage) { AppSettings.settingsScrollOffset(scrollPage) }
-    // Restored once the page has been measured: a scroll state cannot hold an
-    // offset its content has not got yet, so asking for it before the first
-    // layout would land on zero — which is exactly what the page did before
-    // this, every time it was opened.
-    //
-    // Once per page, not per query: a cleared search restores the page's
-    // place itself, below, from the offset saved since. If a search starts
-    // while the page is still being measured, the search's list wins.
-    val currentQuery by rememberUpdatedState(searchQuery)
-    LaunchedEffect(scrollState, scrollPage) {
-        if (restoredOffset <= 0 || currentQuery.isNotBlank()) return@LaunchedEffect
-        snapshotFlow { scrollState.maxValue }.first { it > 0 }
-        if (currentQuery.isNotBlank()) return@LaunchedEffect
-        scrollState.scrollTo(restoredOffset.coerceAtMost(scrollState.maxValue))
+    // A fresh scroll state per page, already at its saved offset. ScrollState
+    // clamps this to the measured range after layout, so short/changed pages
+    // need no second scroll pass.
+    val scrollState = rememberSaveable(scrollPage, saver = ScrollState.Saver) {
+        // A filtered list is a different page shape; it starts at its top.
+        ScrollState(if (searchQuery.isBlank()) restoredOffset else 0)
     }
     // Written out as the listener scrolls, so the place survives the app
     // being closed rather than only a page change. Debounced, because a drag

@@ -312,7 +312,6 @@ import com.music.bitchord.ui.components.QueueActionNotice
 import com.music.bitchord.ui.components.QueueActionNoticeHost
 import com.music.bitchord.ui.components.TopBarAccountButton
 import com.music.bitchord.ui.screens.SegmentedControl
-import com.music.bitchord.ui.components.SearchField
 import com.music.bitchord.sharedui.resources.Res as SharedRes
 import com.music.bitchord.sharedui.resources.podcasts
 import com.music.bitchord.sharedui.resources.search_hint
@@ -374,6 +373,11 @@ import com.music.bitchord.ui.replay.ReplayStoryPage
 import com.music.bitchord.ui.replay.rememberReplayState
 import com.music.bitchord.ui.theme.BitChordTheme
 import com.music.bitchord.ui.theme.rememberArtworkPalette
+import com.music.bitchord.ui.motion.AppMotion
+import com.music.bitchord.ui.motion.LocalDecorativeMotionEnabled
+import com.music.bitchord.ui.LocalPageAnimationActive
+import com.music.bitchord.ui.rememberIsForeground
+import com.music.bitchord.data.settings.MotionMode
 import com.music.bitchord.data.canvas.AppleArtistArtRepository
 import com.music.bitchord.data.canvas.keyColors
 import com.music.bitchord.ui.theme.SystemBarIcons
@@ -472,6 +476,8 @@ class MainActivity : AppCompatActivity() {
             val liquidGlassEnabled by AppSettings.liquidGlass.collectAsStateWithLifecycle()
             val liquidGlassIntensity by AppSettings.liquidGlassIntensity.collectAsStateWithLifecycle()
             val glassPerformance by AppSettings.glassPerformance.collectAsStateWithLifecycle()
+            val appMotionMode by AppSettings.effectiveMotionMode.collectAsStateWithLifecycle()
+            val appForeground = rememberIsForeground()
             val iosOverscrollFactory = rememberIosOverscrollFactory()
             val performanceRefreshRate by AppSettings.performanceRefreshRate.collectAsStateWithLifecycle()
             // The first-run flow, and how far in its sheet has come — the app
@@ -528,6 +534,8 @@ class MainActivity : AppCompatActivity() {
                 val appBackdrop = rememberLayerBackdrop(onDraw = paintBackdrop)
                 CompositionLocalProvider(
                     LocalOverscrollFactory provides iosOverscrollFactory,
+                    LocalDecorativeMotionEnabled provides
+                        (appMotionMode == MotionMode.FULL && appForeground),
                     LocalLiquidGlassEnabled provides liquidGlassEnabled,
                     // The engine's own defaults (see [GlassEffectConfig]) with
                     // every effect parameter multiplied by the Liquid Glass
@@ -750,7 +758,8 @@ private fun BitChordApp(
     // player and no artwork flying between the two. Everything below that
     // takes part in the docking asks for [activeDock] / this, never for the
     // dock or the motion directly.
-    val reducePlayerMotion by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
+    val motionMode by AppSettings.effectiveMotionMode.collectAsStateWithLifecycle()
+    val reducePlayerMotion = motionMode == MotionMode.OFF
     playerSheetMotion.flingVelocity = with(LocalDensity.current) { PLAYER_PULL_FLING_VELOCITY.toPx() }
     // How the app takes the player down, whatever for: a back press, or a page
     // opened from inside it. Set straight to false, the sheet left in one frame
@@ -797,7 +806,8 @@ private fun BitChordApp(
     // turned the party's setting on while the label already said so.
     val autoplayEnabled = autoplayEnabledFor(partyState, autoplay)
     var searchVisualActive by rememberSaveable { mutableStateOf(false) }
-    var searchKeyboardActive by rememberSaveable { mutableStateOf(false) }
+    val searchKeyboardActiveState = rememberSaveable { mutableStateOf(false) }
+    var searchKeyboardActive by searchKeyboardActiveState
     val searchNavFocus = remember { FocusRequester() }
     // Invalidates an in-flight radio lookup when a later play request wins.
     var playRequestGeneration by remember { mutableIntStateOf(0) }
@@ -912,8 +922,6 @@ private fun BitChordApp(
             viewModel.consumeFlowSaveNotice()
         }
     }
-    val queryState = viewModel.query.collectAsStateWithLifecycle()
-    val query by queryState
     val itunesEpisodesState = viewModel.itunesEpisodes.collectAsStateWithLifecycle()
     val itunesEpisodes by itunesEpisodesState
     // The podcast feed is fetched once, the first time its tab is opened.
@@ -1419,7 +1427,9 @@ private fun BitChordApp(
     // Podcasts off means the tab is gone, not greyed out: a tab that leads
     // nowhere is a tab that lies. Under Apple's look there is no podcasts tab
     // to begin with — Apple's own app has none.
-    val visibleTabDefs = tabDefs.filter { it.first != TAB_PODCASTS || podcastsEnabled }
+    val visibleTabDefs = remember(tabDefs, podcastsEnabled) {
+        tabDefs.filter { it.first != TAB_PODCASTS || podcastsEnabled }
+    }
 
     val scope = rememberCoroutineScope()
 
@@ -2560,6 +2570,9 @@ private fun BitChordApp(
         }
         viewModel.setSearchSource(source)
     }
+    // Set when Search is invoked and the page field should take focus.
+    val searchFocusRequestedState = remember { mutableStateOf(false) }
+    var searchFocusRequested by searchFocusRequestedState
     // The search field's own text and caret — see [NavSearchState.textValue].
     //
     // Kept here, above the bar, because the bar is rebuilt every time it
@@ -2571,88 +2584,106 @@ private fun BitChordApp(
     var searchTextValue by remember { mutableStateOf(TextFieldValue("")) }
     // The query comes from the view model, and so can change without the
     // field having been touched — a suggestion picked, the field cleared. When
-    // it does, the field takes it and puts the caret at the end of it.
-    LaunchedEffect(query) {
-        if (searchTextValue.text != query) {
-            searchTextValue = TextFieldValue(query, TextRange(query.length))
+    // it does, the field takes it and puts the caret at the end of it. Collect
+    // in an isolated scope so typing never invalidates the whole app root.
+    IsolatedScope {
+        val query by viewModel.query.collectAsStateWithLifecycle()
+        LaunchedEffect(query) {
+            if (searchTextValue.text != query) {
+                searchTextValue = TextFieldValue(query, TextRange(query.length))
+            }
         }
     }
     val searchImeController = LocalSoftwareKeyboardController.current
     val searchFocusManager = LocalFocusManager.current
-    val navSearchState = NavSearchState(
-        visualActive = searchVisualActive,
-        keyboardActive = searchKeyboardActive,
-        query = query,
-        textValue = searchTextValue,
-        onTextValueChange = {
-            searchTextValue = it
-            viewModel.onQueryChange(it.text)
-        },
-        onQueryChange = viewModel::onQueryChange,
-        onSubmit = {
-            searchKeyboardActive = false
-            viewModel.submitSearch()
-        },
-        searchSource = searchSource,
-        onToggleSource = {
-            // A fixed cycle visits all four sources; the selector's preferred-
-            // first presentation order is deliberately not reused as a cycle.
-            onSearchSourceChange(SearchSource.next(searchSource))
-        },
-        onTapSearchIcon = {
-            if (nav.selectedTab != TAB_SEARCH) nav.lastSearchTab = nav.selectedTab
-            viewModel.clearDetail()
-            viewModel.closeMoodGenre()
-            nav.showSettings = false
-            nav.showAccountScrobbling = false
-            nav.showSources = false
-            nav.showListenTogether = false
-            nav.showEqualizer = false
-            nav.showReplay = false
-            nav.settingsSubScreen = null
-            sheets.showHistory = false
-            sheets.showFlow = false
-            sheets.libraryShowAll = null
-            nav.selectedTab = TAB_SEARCH
-            searchVisualActive = true
-            searchKeyboardActive = false
-            nav.searchPageActive = false
-        },
-        onTapBar = {
-            nav.searchPageActive = true
-            searchKeyboardActive = true
-        },
-        onExit = {
-            when (com.music.bitchord.ui.components.searchBackStep(
-                keyboardActive = searchKeyboardActive,
-                hasQuery = query.isNotEmpty(),
-                historyPageActive = nav.searchPageActive,
-            )) {
-                com.music.bitchord.ui.components.SearchBackStep.HIDE_KEYBOARD -> {
+    val onSearchExit: () -> Unit = {
+        when (com.music.bitchord.ui.components.searchBackStep(
+            keyboardActive = searchKeyboardActive,
+            hasQuery = viewModel.query.value.isNotEmpty(),
+            historyPageActive = nav.searchPageActive,
+        )) {
+            com.music.bitchord.ui.components.SearchBackStep.HIDE_KEYBOARD -> {
+                searchKeyboardActive = false
+                searchImeController?.hide()
+                searchFocusManager.clearFocus()
+            }
+            com.music.bitchord.ui.components.SearchBackStep.CLEAR_RESULTS -> {
+                viewModel.onQueryChange("")
+            }
+            com.music.bitchord.ui.components.SearchBackStep.SHOW_GENRES -> {
+                nav.searchPageActive = false
+            }
+            com.music.bitchord.ui.components.SearchBackStep.EXIT_SEARCH -> {
+                searchVisualActive = false
+                nav.selectedTab = com.music.bitchord.ui.components.validSearchReturnTab(
+                    candidate = nav.lastSearchTab,
+                    visibleTabs = visibleTabDefs.map { it.first },
+                    homeTab = TAB_HOME,
+                    searchTab = TAB_SEARCH,
+                )
+            }
+        }
+    }
+    // Invoked in the glass nav's own scope below: a query change rebuilds only
+    // the search chrome, not every caller of BitChordApp's root content.
+    val createNavSearchState: (String) -> NavSearchState = { query ->
+        NavSearchState(
+            // On the Search page its own field owns the screen. The nav only
+            // enters inline-search mode from another tab.
+            visualActive = searchVisualActive && nav.selectedTab != TAB_SEARCH,
+            keyboardActive = searchKeyboardActive,
+            query = query,
+            textValue = searchTextValue,
+            onTextValueChange = {
+                searchTextValue = it
+                viewModel.onQueryChange(it.text)
+            },
+            onQueryChange = viewModel::onQueryChange,
+            onSubmit = {
+                searchKeyboardActive = false
+                viewModel.submitSearch()
+            },
+            searchSource = searchSource,
+            onToggleSource = {
+                // A fixed cycle visits all four sources; the selector's preferred-
+                // first presentation order is deliberately not reused as a cycle.
+                onSearchSourceChange(SearchSource.next(searchSource))
+            },
+            onTapSearchIcon = {
+                if (nav.selectedTab == TAB_SEARCH) {
+                    // Already on Search: the page field takes focus.
+                    nav.searchPageActive = true
+                    searchKeyboardActive = true
+                    searchFocusRequested = true
+                } else {
+                    nav.lastSearchTab = nav.selectedTab
+                    viewModel.clearDetail()
+                    viewModel.closeMoodGenre()
+                    nav.showSettings = false
+                    nav.showAccountScrobbling = false
+                    nav.showSources = false
+                    nav.showListenTogether = false
+                    nav.showEqualizer = false
+                    nav.showReplay = false
+                    nav.settingsSubScreen = null
+                    sheets.showHistory = false
+                    sheets.showFlow = false
+                    sheets.libraryShowAll = null
+                    nav.selectedTab = TAB_SEARCH
+                    searchVisualActive = true
                     searchKeyboardActive = false
-                    searchImeController?.hide()
-                    searchFocusManager.clearFocus()
-                }
-                com.music.bitchord.ui.components.SearchBackStep.CLEAR_RESULTS -> {
-                    viewModel.onQueryChange("")
-                }
-                com.music.bitchord.ui.components.SearchBackStep.SHOW_GENRES -> {
                     nav.searchPageActive = false
                 }
-                com.music.bitchord.ui.components.SearchBackStep.EXIT_SEARCH -> {
-                    searchVisualActive = false
-                    nav.selectedTab = com.music.bitchord.ui.components.validSearchReturnTab(
-                        candidate = nav.lastSearchTab,
-                        visibleTabs = visibleTabDefs.map { it.first },
-                        homeTab = TAB_HOME,
-                        searchTab = TAB_SEARCH,
-                    )
-                }
-            }
-        },
-        onCloseKeyboard = { searchKeyboardActive = false },
-        focusRequester = searchNavFocus,
-    )
+            },
+            onTapBar = {
+                nav.searchPageActive = true
+                searchKeyboardActive = true
+            },
+            onExit = onSearchExit,
+            onCloseKeyboard = { searchKeyboardActive = false },
+            focusRequester = searchNavFocus,
+        )
+    }
     // Shared by the Library tab itself and by a shelf's "Show all" page, so a
     // card opens the same way from either.
     val onLibraryItemClick: (ShelfItem) -> Unit = { item ->
@@ -3314,11 +3345,6 @@ private fun BitChordApp(
         // Podcast show page: newest-first vs oldest-first episode sort.
         val podcastSortNewestState = rememberSaveable { mutableStateOf(true) }
         var podcastSortNewest by podcastSortNewestState
-        // Set each time the search tab is tapped, which SearchScreen uses as a
-        // signal to focus the input field.
-        val searchFocusRequestedState = remember { mutableStateOf(false) }
-        var searchFocusRequested by searchFocusRequestedState
-        val searchFieldFocus = remember { FocusRequester() }
         val flowListState = rememberLazyListState()
         val exploreListState = rememberLazyListState()
         val quickPicksListState = rememberLazyListState()
@@ -3402,7 +3428,7 @@ private fun BitChordApp(
 
 
 
-        val tabs = visibleTabDefs.map { it.second }
+        val tabs = remember(visibleTabDefs) { visibleTabDefs.map { it.second } }
 
         val selectedTabIndex = visibleTabDefs.indexOfFirst { it.first == nav.selectedTab }.coerceAtLeast(0)
 
@@ -3493,7 +3519,7 @@ private fun BitChordApp(
                 !sheets.showFlow && !sheets.showQuickPicks && !nav.showGenres && !nav.showAudiobooks &&
                 sheets.openAudiobook == null && nav.itunesPodcastId == null && sheets.libraryShowAll == null &&
                 sheets.detailActiveShelf == null,
-            onBack = navSearchState.onExit,
+            onBack = onSearchExit,
         )
         BackHandler(
             enabled = detail == null && !nav.showSettings && !nav.showAccountScrobbling && !sheets.showSpotify &&
@@ -4099,7 +4125,6 @@ private fun BitChordApp(
             likeStatusesState = likeStatusesState,
             offlineActiveState = offlineActiveState,
             podcastsEnabledState = podcastsEnabledState,
-            queryState = queryState,
             refreshingState = refreshingState,
             savedCollectionsState = savedCollectionsState,
             searchSourceState = searchSourceState,
@@ -4113,6 +4138,7 @@ private fun BitChordApp(
             librarySegmentState = librarySegmentState,
             podcastSortNewestState = podcastSortNewestState,
             searchFocusRequestedState = searchFocusRequestedState,
+            searchKeyboardActiveState = searchKeyboardActiveState,
             signInBannerDismissedState = signInBannerDismissedState,
         )
         // On a tablet the page and the player stand side by side rather than
@@ -4174,6 +4200,8 @@ private fun BitChordApp(
                 // Which page is on screen, as one name. The transition runs
                 // on the difference between two of these.
                 val pageKey = rootPageKey(nav, sheets, podcastUi.showContinueListening, detail)
+                val rootPageMotion = remember { RootPageMotion() }
+                val pageDirection = remember(pageKey) { rootPageMotion.advance(pageKey) }
                 // A page change moves the content the glass samples. The
                 // clock tells every glass surface to hold its capture for the
                 // length of the slide rather than re-record it per frame —
@@ -4190,6 +4218,11 @@ private fun BitChordApp(
                     // than finished over a page it has nothing to do with.
                     cancelArtworkFlight()
                 }
+                CompositionLocalProvider(
+                    LocalPageAnimationActive provides !pageHiddenByPlayer,
+                    LocalDecorativeMotionEnabled provides
+                        (LocalDecorativeMotionEnabled.current && !pageHiddenByPlayer),
+                ) {
                 AnimatedContent(
                     targetState = pageKey,
                     // Tabs swap outright; everything else crossfades.
@@ -4236,11 +4269,17 @@ private fun BitChordApp(
                                 val forward = to >= from
                                 val sign = if (forward) 1 else -1
                                 (
-                                    slideInHorizontally(tween(TAB_SWAP_MS)) { it / 8 * sign } +
-                                        fadeIn(tween(TAB_SWAP_FADE_MS))
+                                    slideInHorizontally(
+                                        AppMotion.tween(motionMode, fullMs = TAB_SWAP_MS),
+                                    ) { it / 8 * sign } + fadeIn(
+                                        AppMotion.tween(motionMode, fullMs = TAB_SWAP_FADE_MS),
+                                    )
                                     ) togetherWith (
-                                    slideOutHorizontally(tween(TAB_SWAP_MS)) { -it / 10 * sign } +
-                                        fadeOut(tween(TAB_SWAP_FADE_MS))
+                                    slideOutHorizontally(
+                                        AppMotion.tween(motionMode, fullMs = TAB_SWAP_MS),
+                                    ) { -it / 10 * sign } + fadeOut(
+                                        AppMotion.tween(motionMode, fullMs = TAB_SWAP_FADE_MS),
+                                    )
                                     )
                             }
                             // The grid and the row are the same tab laid out
@@ -4248,13 +4287,24 @@ private fun BitChordApp(
                             // between them would say they are different
                             // places, which they are not.
                             libraryShowAllSwap -> EnterTransition.None togetherWith ExitTransition.None
-                            // A page opened over another slides in from the
-                            // edge, the way a pushed page does on a phone.
-                            // A fade alone leaves the direction unsaid, and the
-                            // page appears to have been there all along.
-                            else -> (
-                                slideInHorizontally(tween(PAGE_PUSH_MS)) { it / 6 } + fadeIn(tween(PAGE_FADE_MS))
-                                ) togetherWith fadeOut(tween(PAGE_FADE_MS))
+                            // Push and Back share the same short native slide/fade,
+                            // with a small outgoing parallax instead of a hard cut.
+                            else -> {
+                                val sign = if (pageDirection < 0) -1 else 1
+                                (
+                                    slideInHorizontally(
+                                        AppMotion.tween(motionMode, fullMs = PAGE_PUSH_MS),
+                                    ) { it / 6 * sign } + fadeIn(
+                                        AppMotion.tween(motionMode, fullMs = PAGE_FADE_MS),
+                                    )
+                                    ) togetherWith (
+                                    slideOutHorizontally(
+                                        AppMotion.tween(motionMode, fullMs = PAGE_PUSH_MS),
+                                    ) { -it / 10 * sign } + fadeOut(
+                                        AppMotion.tween(motionMode, fullMs = PAGE_FADE_MS),
+                                    )
+                                    )
+                            }
                         }
                     },
                     modifier = Modifier
@@ -4292,6 +4342,7 @@ private fun BitChordApp(
                     label = "content",
                 ) { key ->
                     RootPage(key = key, inputs = pageInputs)
+                }
                 }
 
                 // The top-bar footprint is transparent on every page so the
@@ -4437,41 +4488,9 @@ private fun BitChordApp(
                         else -> null
                     },
                     modifier = Modifier.align(Alignment.TopCenter),
-                    // Only on the Search tab itself, not on anything pushed over it.
-                    accessory = if (
-                        !useFoldingNav &&
-                        nav.selectedTab == TAB_SEARCH && detail == null && selectedMoodGenreState.value == null &&
-                        sheets.libraryShowAll == null && !nav.showSettings && !nav.showAccountScrobbling &&
-                        !nav.showSources && !nav.showListenTogether && !nav.showEqualizer && !sheets.showDiscord &&
-                        !sheets.showHistory && !sheets.showFlow && !sheets.showQuickPicks && !nav.showReplay
-                    ) {
-                        {
-                            // The search field lives up here in the bar, beside the
-                            // account photo, so it answers the nav bar's Search tap
-                            // itself: focus and keyboard, the way the page used to.
-                            val keyboard = LocalSoftwareKeyboardController.current
-                            LaunchedEffect(searchFocusRequested) {
-                                if (searchFocusRequested) {
-                                    searchFieldFocus.requestFocus()
-                                    keyboard?.show()
-                                    searchFocusRequested = false
-                                }
-                            }
-                            SearchField(
-                                query = queryState.value,
-                                onQueryChange = viewModel::onQueryChange,
-                                onSubmit = viewModel::submitSearch,
-                                focusRequester = searchFieldFocus,
-                                placeholder = org.jetbrains.compose.resources.stringResource(
-                                    if (searchSourceState.value == SearchSource.LIBRARY) {
-                                        SharedRes.string.search_library_hint
-                                    } else {
-                                        SharedRes.string.search_hint
-                                    },
-                                ),
-                            )
-                        }
-                    } else null,
+                    // Search owns one page field below the large page title.
+                    // The top bar carries no second field.
+                    accessory = null,
                     actions = {
                         // This is intentionally scoped to Listen together: the
                         // round-trip time is meaningful while coordinating a
@@ -4733,11 +4752,8 @@ private fun BitChordApp(
                             // The second Search tap opens Apple's dedicated
                             // recent-search page; only that page needs the IME.
                             nav.searchPageActive = true
-                            if (useFoldingNav) {
-                                searchKeyboardActive = true
-                            } else {
-                                searchFocusRequested = true
-                            }
+                            searchKeyboardActive = true
+                            searchFocusRequested = true
                         }
                     } else {
                         searchVisualActive = false
@@ -4769,36 +4785,39 @@ private fun BitChordApp(
                         // component they are stacked to imitate: the now playing
                         // controls dock into the tab bar rather than riding above it,
                         // and the pair folds together on scroll. See [GlassNavBar].
-                        AppGlassNav(
-                            useFoldingNav = useFoldingNav,
-                            tabs = tabs,
-                            selectedIndex = selectedTabIndex,
-                            onTabSelected = onTabSelected,
-                            scrollConnection = navBarScroll,
-                            search = navSearchState,
-                            placeholder = org.jetbrains.compose.resources.stringResource(
-                                if (searchSourceState.value == SearchSource.LIBRARY) {
-                                    SharedRes.string.search_library_hint
+                        IsolatedScope {
+                            val query by viewModel.query.collectAsStateWithLifecycle()
+                            AppGlassNav(
+                                useFoldingNav = useFoldingNav,
+                                tabs = tabs,
+                                selectedIndex = selectedTabIndex,
+                                onTabSelected = onTabSelected,
+                                scrollConnection = navBarScroll,
+                                search = createNavSearchState(query),
+                                placeholder = org.jetbrains.compose.resources.stringResource(
+                                    if (searchSourceState.value == SearchSource.LIBRARY) {
+                                        SharedRes.string.search_library_hint
+                                    } else {
+                                        SharedRes.string.search_hint
+                                    },
+                                ),
+                                song = player.song,
+                                isPlaying = player.isPlaying,
+                                isLoading = playPauseBusy,
+                                onPlayPause = { togglePlayPause() },
+                                onNext = { controller?.seekToNextMediaItem() },
+                                onPrevious = { controller?.seekToPrevious() },
+                                onExpand = if (reducePlayerMotion) {
+                                    { showNowPlaying = true }
                                 } else {
-                                    SharedRes.string.search_hint
+                                    playerSheetMotion::open
                                 },
-                            ),
-                            song = player.song,
-                            isPlaying = player.isPlaying,
-                            isLoading = playPauseBusy,
-                            onPlayPause = { togglePlayPause() },
-                            onNext = { controller?.seekToNextMediaItem() },
-                            onPrevious = { controller?.seekToPrevious() },
-                            onExpand = if (reducePlayerMotion) {
-                                { showNowPlaying = true }
-                            } else {
-                                playerSheetMotion::open
-                            },
-                            controlsLocked = controlsLocked,
-                            onBlockedControl = showHostOnlyNotice,
-                            dock = activeDock,
-                            pull = playerSheetMotion.takeIf { !reducePlayerMotion },
-                        )
+                                controlsLocked = controlsLocked,
+                                onBlockedControl = showHostOnlyNotice,
+                                dock = activeDock,
+                                pull = playerSheetMotion.takeIf { !reducePlayerMotion },
+                            )
+                        }
                     }
                 } else Box(
                     modifier = Modifier
@@ -5025,7 +5044,6 @@ private fun RootPage(
     val likeStatuses by inputs.likeStatusesState
     val offlineActive by inputs.offlineActiveState
     val podcastsEnabled by inputs.podcastsEnabledState
-    val query by inputs.queryState
     val refreshing by inputs.refreshingState
     val savedCollections by inputs.savedCollectionsState
     val searchSource by inputs.searchSourceState
@@ -5039,6 +5057,7 @@ private fun RootPage(
     var librarySegment by inputs.librarySegmentState
     var podcastSortNewest by inputs.podcastSortNewestState
     var searchFocusRequested by inputs.searchFocusRequestedState
+    var searchKeyboardActive by inputs.searchKeyboardActiveState
     var signInBannerDismissed by inputs.signInBannerDismissedState
     // The flows only the pages read, collected per slot. A fresh
     // collector starts from the flow's current value, so a page entering
@@ -6132,8 +6151,8 @@ private fun RootPage(
             pullState = scroll.explorePull,
             contentPadding = listPadding,
         )
-        TAB_SEARCH -> SearchScreen(
-            query = query,
+        TAB_SEARCH -> IsolatedScope { SearchScreen(
+            query = viewModel.query.collectAsStateWithLifecycle().value,
             searchActive = nav.searchPageActive,
             // Apple's genre wall and recently-played rows belong to Apple's
             // look; with any other UI provider the page is what it was.
@@ -6181,7 +6200,10 @@ private fun RootPage(
             listState = scroll.search,
             scrollResetTrigger = searchScrollReset,
             focusRequested = searchFocusRequested,
-            onFocusHandled = { searchFocusRequested = false },
+            onFocusHandled = {
+                searchFocusRequested = false
+                searchKeyboardActive = false
+            },
             // Search hits are alternatives to each other, not a running
             // order — play the one tapped and build a station from it.
             onSongClick = { songs, index ->
@@ -6311,8 +6333,9 @@ private fun RootPage(
             onTypeaheadLongPress = pageActions.openSongMenu,
             contentPadding = listPadding,
             topPadding = topBarContentPadding(),
-            // The field is in the top bar; see the bar's accessory.
-            showField = false,
+            // One field, under the large Search title. The nav never opens a
+            // second inline field while this page is showing.
+            showField = true,
             // The settings page's own two-state selector, so the
             // app has one look for "pick one of these".
             sourceSwitcher = {
@@ -6349,7 +6372,7 @@ private fun RootPage(
                     ),
                 )
             },
-        )
+        ) }
         else -> if (appleUi) {
             // Apple's categories and mixed Recently Added grid, with no rows
             // borrowed from another provider's library.
@@ -6516,7 +6539,6 @@ private data class PageInputs(
     val likeStatusesState: androidx.compose.runtime.State<Map<String, com.music.bitchord.data.model.LikeStatus>>,
     val offlineActiveState: androidx.compose.runtime.State<Boolean>,
     val podcastsEnabledState: androidx.compose.runtime.State<Boolean>,
-    val queryState: androidx.compose.runtime.State<String>,
     val refreshingState: androidx.compose.runtime.State<Set<MainViewModel.Feed>>,
     val savedCollectionsState: androidx.compose.runtime.State<Map<String, com.music.bitchord.download.SavedCollection>>,
     val searchSourceState: androidx.compose.runtime.State<SearchSource>,
@@ -6530,6 +6552,7 @@ private data class PageInputs(
     val librarySegmentState: androidx.compose.runtime.MutableState<LibrarySegment>,
     val podcastSortNewestState: androidx.compose.runtime.MutableState<Boolean>,
     val searchFocusRequestedState: androidx.compose.runtime.MutableState<Boolean>,
+    val searchKeyboardActiveState: androidx.compose.runtime.MutableState<Boolean>,
     val signInBannerDismissedState: androidx.compose.runtime.MutableState<Boolean>,
 )
 

@@ -46,6 +46,9 @@ import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.music.bitchord.data.settings.MixBlend
+import com.music.bitchord.ui.LocalPageAnimationActive
+import com.music.bitchord.ui.rememberIsForeground
+import com.music.bitchord.ui.motion.rememberDecorativeMotionEnabled
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
@@ -408,7 +411,9 @@ fun rememberMixPulse(mixBlend: () -> MixBlend?, enabled: Boolean): MixPulse {
     val pulse = remember { MixPulse { current() } }
     val active = pulse.active
     val playing = pulse.playing
-    LaunchedEffect(active, playing, enabled) {
+    val motionVisible = rememberIsForeground() && LocalPageAnimationActive.current
+    val clockEnabled = enabled && motionVisible
+    LaunchedEffect(active, playing, clockEnabled) {
         launch {
             pulse.coverAnim.animateTo(
                 if (active) 1f else 0f,
@@ -419,11 +424,11 @@ fun rememberMixPulse(mixBlend: () -> MixBlend?, enabled: Boolean): MixPulse {
             // Paused mid-blend, the pulse settles to a steady bar rather than beating on
             // over silence — and the frame clock below gets to stop.
             pulse.depthAnim.animateTo(
-                if (active && playing && enabled) 1f else 0f,
+                if (active && playing && clockEnabled) 1f else 0f,
                 tween(durationMillis = PULSE_FADE_MS, easing = FastOutSlowInEasing),
             )
         }
-        if (!enabled) return@LaunchedEffect
+        if (!clockEnabled) return@LaunchedEffect
         // The pulse's own beat clock. The blend publishes a beat anchor every fade tick, and
         // each one is re-derived from player positions that wobble by a few tens of ms — drawn
         // straight, that wobble is the pulse lurching. So this runs a free phase at the blend's
@@ -515,19 +520,21 @@ private const val LOADING_MIN_MS = 600L
  */
 @Composable
 private fun MixSheen(height: Dp, color: Color) {
-    val transition = rememberInfiniteTransition(label = "mixSheen")
-    val phase by transition.animateFloat(
-        initialValue = -SHEEN_BAND_FRACTION,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1000, easing = LinearEasing),
-            // Reverses rather than restarting: a restart teleports the band
-            // back to the far edge every second, which is a hitch the eye
-            // catches each time. Ping-pong has no edge to fall off.
-            repeatMode = RepeatMode.Reverse,
-        ),
-        label = "mixSheenPhase",
-    )
+    val motionEnabled = rememberDecorativeMotionEnabled()
+    val phase by if (motionEnabled) {
+        rememberInfiniteTransition(label = "mixSheen").animateFloat(
+            initialValue = -SHEEN_BAND_FRACTION,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 1000, easing = LinearEasing),
+                // Ping-pong avoids a visible teleport at the repeat boundary.
+                repeatMode = RepeatMode.Reverse,
+            ),
+            label = "mixSheenPhase",
+        )
+    } else {
+        remember { mutableFloatStateOf(0.5f) }
+    }
     Canvas(
         Modifier
             .fillMaxWidth()

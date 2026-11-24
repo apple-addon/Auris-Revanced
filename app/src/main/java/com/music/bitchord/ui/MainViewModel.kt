@@ -1656,8 +1656,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
      * Only ever removes. A track liked from somewhere else doesn't get spliced
      * into a list that YouTube orders for itself; the next fetch places it.
      */
-    private fun dropFromLikedLists(videoId: String) {
-        LikedCache.drop(listenerKey(), videoId)
+    private suspend fun dropFromLikedLists(videoId: String) {
+        withContext(Dispatchers.IO) {
+            LikedCache.drop(listenerKey(), videoId)
+        }
         val library = (_library.value as? UiState.Success)?.data
         if (library != null && library.likedSongs.any { it.videoId == videoId }) {
             _library.value = UiState.Success(
@@ -1712,7 +1714,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         val fresh = YtMusicRepository.browseSongs(YtMusicRepository.LIKED_MUSIC)
             .getOrNull()?.songs.orEmpty()
         if (fresh.isEmpty()) return
-        LikedCache.mergeTop(listenerKey(), fresh)
+        withContext(Dispatchers.IO) {
+            LikedCache.mergeTop(listenerKey(), fresh)
+        }
         _detailStack.value = _detailStack.value.map { page ->
             if (page.browseId != YtMusicRepository.LIKED_MUSIC) return@map page
             val songs = (page.songs as? UiState.Success)?.data.orEmpty()
@@ -3862,7 +3866,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         // Hearts before bytes: the persistent liked list seeds LikeState
         // instantly, so nothing waits on the network to read as liked.
         identity?.let { id ->
-            LikedCache.read(id)?.let { cached ->
+            withContext(Dispatchers.IO) { LikedCache.read(id) }?.let { cached ->
                 LikeState.seedLiked(cached.mapTo(HashSet()) { it.videoId })
             }
         }
@@ -3874,7 +3878,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 // a liked track past the first page still reads as liked.
                 // The cache takes the first page now; the walk below appends
                 // the rest as it lands, so a force-stop never loses the list.
-                identity?.let { id -> LikedCache.write(id, page.likedSongs) }
+                identity?.let { id ->
+                    withContext(Dispatchers.IO) { LikedCache.write(id, page.likedSongs) }
+                }
                 page.likedContinuation?.let { token -> syncLikedMusic(identity, token) }
                 if (page.isEmpty) UiState.Error(text(R.string.library_empty))
                 else UiState.Success(page.copy(likedContinuation = null))
@@ -3905,7 +3911,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     null
                 } else {
                     YtMusicRepository.moreSongs(next).getOrNull()?.also { page ->
-                        identity?.let { id -> LikedCache.mergeBottom(id, page.songs) }
+                        identity?.let { id ->
+                            withContext(Dispatchers.IO) { LikedCache.mergeBottom(id, page.songs) }
+                        }
                     }
                 }
             }
@@ -4386,6 +4394,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
     }
 
+    /** Merge and deduplicate a growing result set without blocking composition. */
+    private suspend fun mergeSearchResults(
+        current: List<SearchResult>,
+        added: List<SearchResult>,
+    ): List<SearchResult> = withContext(Dispatchers.Default) {
+        (current + added).distinctBy(::searchResultKey).withoutBlockedArtists()
+    }
+
     /**
      * Continues the visible search only when the list reaches its end. This is
      * deliberately separate from the first-page request: waiting for every
@@ -4410,8 +4426,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             if (stillCurrent) {
                 next.onSuccess { page ->
                     val current = (_results.value as? UiState.Success)?.data.orEmpty()
-                    val merged = (current + page.rows).distinctBy(::searchResultKey)
-                        .withoutBlockedArtists()
+                    val merged = mergeSearchResults(current, page.rows)
+                    if (searchSession != session || session.requestId != newestRequestId.get()) {
+                        return@onSuccess
+                    }
                     searchCache.put(session.key, SearchCacheEntry(merged, page.continuation))
                     searchSession = session.copy(continuation = page.continuation)
                     _results.value = UiState.Success(merged)
@@ -4462,9 +4480,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             if (stillCurrent) {
                 next.onSuccess { rows ->
                     val current = (_results.value as? UiState.Success)?.data.orEmpty()
-                    val merged = (current + rows)
-                        .distinctBy(::searchResultKey)
-                        .withoutBlockedArtists()
+                    val merged = mergeSearchResults(current, rows)
+                    if (searchSession != session || session.requestId != newestRequestId.get()) {
+                        return@onSuccess
+                    }
                     val songs = merged.count { it is SearchResult.Track }
                     val more = rows.count { it is SearchResult.Track } >= APPLE_SEARCH_PAGE
                     searchCache.put(
@@ -4494,9 +4513,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             if (stillCurrent) {
                 next.onSuccess { page ->
                     val current = (_results.value as? UiState.Success)?.data.orEmpty()
-                    val merged = (current + page.rows)
-                        .distinctBy(::searchResultKey)
-                        .withoutBlockedArtists()
+                    val merged = mergeSearchResults(current, page.rows)
+                    if (searchSession != session || session.requestId != newestRequestId.get()) {
+                        return@onSuccess
+                    }
                     searchCache.put(session.key, SearchCacheEntry(merged, null, page.nextOffset))
                     searchSession = session.copy(nextOffset = page.nextOffset)
                     _results.value = UiState.Success(merged)
@@ -4771,6 +4791,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
 
         /** How many Spotify tracks are looked up on YouTube Music at once. */
         private const val SPOTIFY_MATCH_PARALLELISM = 6
+
+        /** Resolved rows are published together instead of copying the page per track. */
+        private const val SPOTIFY_MATCH_PUBLISH_BATCH = 8
 
         /**
          * How long a keystroke waits before the typeahead is asked about it.
@@ -5126,14 +5149,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     // 1,600-track walk costs a minute of continuations, the
                     // snapshot is free. The fetch below replaces it.
                     if (browseId == YtMusicRepository.LIKED_MUSIC) {
-                        LikedCache.read(listenerKey())?.takeIf { it.isNotEmpty() }?.let { cached ->
-                            val painted = cached.withLocalFiles()
-                            _detailStack.value = _detailStack.value.map {
-                                if (it.browseId == browseId && it.songs is UiState.Loading) {
-                                    it.copy(songs = UiState.Success(painted))
-                                } else it
+                        withContext(Dispatchers.IO) { LikedCache.read(listenerKey()) }
+                            ?.takeIf { it.isNotEmpty() }
+                            ?.let { cached ->
+                                val painted = cached.withLocalFiles()
+                                _detailStack.value = _detailStack.value.map {
+                                    if (it.browseId == browseId && it.songs is UiState.Loading) {
+                                        it.copy(songs = UiState.Success(painted))
+                                    } else it
+                                }
                             }
-                        }
                     }
                     YtMusicRepository.browseSongs(browseId).fold(
                         onSuccess = { page ->
@@ -5849,6 +5874,27 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     ) {
         setSongs(UiState.Success(tracks.map { it.asPendingSong() }))
         val gate = Semaphore(SPOTIFY_MATCH_PARALLELISM)
+        // Children inherit this ViewModel's Main dispatcher. Collect resolved
+        // indices here and copy/publish the growing page once per batch rather
+        // than once per track; matching and playback prefetch stay unchanged.
+        val pending = mutableMapOf<Int, Song>()
+
+        fun publishResolved() {
+            if (pending.isEmpty()) return
+            val resolved = pending.toMap()
+            pending.clear()
+            _detailStack.value = _detailStack.value.map { page ->
+                val list = (page.songs as? UiState.Success<List<Song>>)?.data
+                if (page.browseId == browseId && list != null) {
+                    val updated = list.toMutableList()
+                    resolved.forEach { (index, song) ->
+                        if (index < updated.size) updated[index] = song
+                    }
+                    page.copy(songs = UiState.Success(updated))
+                } else page
+            }
+        }
+
         coroutineScope {
             tracks.forEachIndexed { index, track ->
                 launch {
@@ -5872,16 +5918,13 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         // lookup done before the row was ever pressed.
                         val found = match?.copy(thumbnailUrl = match.thumbnailUrl ?: track.imageUrl)
                             ?: SpotifyHomeSource.songFor(track)
-                        _detailStack.value = _detailStack.value.map { page ->
-                            val list = (page.songs as? UiState.Success<List<Song>>)?.data
-                            if (page.browseId == browseId && list != null && index < list.size) {
-                                page.copy(songs = UiState.Success(list.toMutableList().also { it[index] = found }))
-                            } else page
-                        }
+                        pending[index] = found
+                        if (pending.size >= SPOTIFY_MATCH_PUBLISH_BATCH) publishResolved()
                     }
                 }
             }
         }
+        publishResolved()
     }
 
     fun reloadLocalDetail(browseId: String) {
@@ -6056,9 +6099,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 val known = existing.mapTo(HashSet()) { it.videoId }
                 val rawAdded = fetched.songs.filter { known.add(it.videoId) }
                 val added = rawAdded.withoutBlockedArtists().withArtwork(artworkFallback)
-                if (browseId == YtMusicRepository.LIKED_MUSIC && added.isNotEmpty()) {
-                    LikedCache.mergeBottom(listenerKey(), added)
-                }
                 // Suggestions can arrive on a later page than the real
                 // tracks, once the playlist's own continuation runs dry —
                 // see parsePlaylistShelf — so they're tracked separately
@@ -6075,6 +6115,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         songs = UiState.Success(existing + added),
                         suggestedSongs = current.suggestedSongs + addedSuggested,
                     )
+                }
+                if (browseId == YtMusicRepository.LIKED_MUSIC && added.isNotEmpty()) {
+                    withContext(Dispatchers.IO) {
+                        LikedCache.mergeBottom(listenerKey(), added)
+                    }
                 }
                 next = fetched.continuation
                 if (browseId.isEndlessMix()) {

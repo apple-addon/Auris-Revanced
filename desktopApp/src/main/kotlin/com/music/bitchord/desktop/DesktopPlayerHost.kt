@@ -14,6 +14,7 @@ import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.data.settings.AutomixPanelState
 import com.music.bitchord.data.settings.LastPlayerScreen
 import com.music.bitchord.data.settings.MixBlend
+import com.music.bitchord.data.settings.MotionMode
 import com.music.bitchord.data.settings.SmartAnalysis
 import com.music.bitchord.data.settings.TransitionWindow
 import com.music.bitchord.playback.smart.AutomixOverride
@@ -210,6 +211,7 @@ internal object DesktopPlayerSettings : PlayerSettingsSource {
     override val preferUsbDac = MutableStateFlow(false)
     override val prioritizeSpotifyCanvas = MutableStateFlow(false)
     override val spotifyCanvasEnabled = MutableStateFlow(true)
+    override val motionMode = MutableStateFlow(MotionMode.FULL)
     override val reduceAnimation = MutableStateFlow(false)
     override val reduceDynamicBlur = MutableStateFlow(false)
     override val showNerdStats = MutableStateFlow(false)

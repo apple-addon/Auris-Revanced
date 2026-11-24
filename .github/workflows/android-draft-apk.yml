@@ -24,9 +24,9 @@ on:
         required: true
         default: "v3.1"
       fast:
-        description: "Skip R8 and resource shrinking for a faster test build"
+        description: "Skip R8 and resource shrinking for a faster compile (not for performance testing)"
         type: boolean
-        default: true
+        default: false
       title:
         description: "Title of the private draft release"
         required: true
@@ -332,18 +332,16 @@ jobs:
       # shared modules and the native build are usually unchanged between
       # drafts), --parallel compiles the three modules :app depends on at once.
       #
-      # fast=true (the default, matching the Appix lane) sets
-      # -Pauris.fastApk=true: no R8, no resource shrinking, no lintVital in
-      # this invocation — the six minutes that separate a test APK from a
-      # shipping build. What it does NOT remove: compilation of every module,
-      # the class guards, the package / versionCode / signature checks below,
-      # or the lint gate in the `lint` job, which runs the identical lintVital
-      # task on its own runner at the same time and is required by `draft`.
-      # fast=false gives the full R8 build (~11.5 min).
+      # fast=true is an optional compile-time shortcut: no R8 or resource
+      # shrinking. The default is the full optimized build because an
+      # unoptimized Compose APK is not representative for performance testing.
+      # Both modes leave lintVital to the required parallel `lint` job, so the
+      # gate still runs but never runs twice. Compilation of every module, the
+      # class guards, and package/version/signature checks run in both modes.
       - name: Build the APKs
         run: |
           set -euo pipefail
-          args=()
+          args=("-Pauris.skipLintVital=true")
           if [ "${{ inputs.fast }}" = "true" ]; then
             args+=("-Pauris.fastApk=true")
           fi

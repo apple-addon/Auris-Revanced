@@ -56,6 +56,7 @@ import androidx.media3.datasource.DefaultDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import com.music.bitchord.ui.rememberIsForeground
+import com.music.bitchord.ui.LocalPageAnimationActive
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.music.bitchord.data.Http
 import com.music.bitchord.data.canvas.CanvasArtwork
@@ -372,8 +373,9 @@ internal fun AndroidCanvasArtworkPlayer(
     // Held inside this component rather than asked of each caller, so no call
     // site can forget it.
     val foreground = rememberIsForeground()
-    LaunchedEffect(foreground, isPlaying, pausedForTransition) {
-        player.playWhenReady = foreground && isPlaying && !pausedForTransition
+    val pageAnimationActive = LocalPageAnimationActive.current
+    LaunchedEffect(foreground, isPlaying, pausedForTransition, pageAnimationActive) {
+        player.playWhenReady = foreground && isPlaying && !pausedForTransition && pageAnimationActive
     }
 
     // Repaint onto a surface that has just been handed back. A TextureView's
@@ -410,9 +412,9 @@ internal fun AndroidCanvasArtworkPlayer(
     DisposableEffect(copyThread) {
         onDispose { copyThread?.stop() }
     }
-    LaunchedEffect(rendered, copyThread) {
+    LaunchedEffect(rendered, copyThread, pageAnimationActive) {
         reportRendered(rendered)
-        if (!rendered || copyThread == null) return@LaunchedEffect
+        if (!rendered || copyThread == null || !pageAnimationActive) return@LaunchedEffect
         // Let the surface actually paint the frame that just triggered this
         // before reading it back — grabbing it the instant the callback fires
         // can still catch the previous, empty buffer.
@@ -458,13 +460,14 @@ internal fun AndroidCanvasArtworkPlayer(
         pausedForTransition,
         currentVideoSize,
         copyThread,
+        pageAnimationActive,
     ) {
         val requested = refreshFrameEveryMs ?: return@LaunchedEffect
         val frames = copyThread ?: return@LaunchedEffect
         Log.d(TAG, "periodic frame refresh started, interval=$requested")
         // A paused clip has no new colours to follow; re-reading the same
         // frame off the GPU would only stall it.
-        if (!rendered || !foreground || !isPlaying || pausedForTransition) return@LaunchedEffect
+        if (!rendered || !foreground || !isPlaying || pausedForTransition || !pageAnimationActive) return@LaunchedEffect
         while (isActive) {
             val view = textureView
             if (view == null) {
@@ -735,6 +738,21 @@ private fun TextureView.captureAt(
     }.getOrNull()
 }
 
+/** Run the synchronous TextureView fallback on the same worker as PixelCopy. */
+private suspend fun TextureView.captureAtOffMain(
+    maxPx: Int,
+    clipAspect: Float,
+    contentMode: CanvasContentMode,
+    alignPortraitTop: Boolean,
+    copyHandler: Handler,
+): Bitmap? = suspendCancellableCoroutine { continuation ->
+    val posted = copyHandler.post {
+        val frame = captureAt(maxPx, clipAspect, contentMode, alignPortraitTop)
+        if (continuation.isActive) continuation.resume(frame)
+    }
+    if (!posted && continuation.isActive) continuation.resume(null)
+}
+
 /**
  * A frame off the clip, copied off the GPU without stalling the main thread.
  *
@@ -767,12 +785,12 @@ private suspend fun TextureView.captureLiveFrame(
     val texture = surfaceTexture
     val size = video
     if (texture == null || size == null || size.width <= 0 || size.height <= 0) {
-        return captureAt(maxPx, clipAspect, contentMode, alignPortraitTop)
+        return captureAtOffMain(maxPx, clipAspect, contentMode, alignPortraitTop, copyHandler)
     }
     val videoWidth = (size.width * size.pixelWidthHeightRatio).roundToInt()
     val videoHeight = size.height
     if (videoWidth <= 0 || videoHeight <= 0) {
-        return captureAt(maxPx, clipAspect, contentMode, alignPortraitTop)
+        return captureAtOffMain(maxPx, clipAspect, contentMode, alignPortraitTop, copyHandler)
     }
     // The clip's own shape, no bigger than [maxPx] on its longest edge.
     val scale = minOf(1f, maxPx.toFloat() / maxOf(videoWidth, videoHeight))
@@ -803,7 +821,7 @@ private suspend fun TextureView.captureLiveFrame(
     if (result != PixelCopy.SUCCESS) {
         Log.w(TAG, "live frame copy failed ($result), reading the view instead")
         bitmap.recycle()
-        return captureAt(maxPx, clipAspect, contentMode, alignPortraitTop)
+        return captureAtOffMain(maxPx, clipAspect, contentMode, alignPortraitTop, copyHandler)
     }
     return bitmap
 }

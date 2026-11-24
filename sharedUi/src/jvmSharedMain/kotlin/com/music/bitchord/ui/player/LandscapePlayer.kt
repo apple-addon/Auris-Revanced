@@ -509,6 +509,7 @@ internal fun LandscapeCredits(
                 glyphSize = 24.dp,
                 touchSize = 40.dp,
                 disc = false,
+                modifier = Modifier.favoritePop(liked),
             )
             Spacer(Modifier.width(2.dp))
         }

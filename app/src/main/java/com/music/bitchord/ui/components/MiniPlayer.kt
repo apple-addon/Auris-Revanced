@@ -76,6 +76,7 @@ import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.haptics.Haptic
 import com.music.bitchord.ui.haptics.rememberHaptics
 import com.music.bitchord.ui.player.PlayerDock
+import com.music.bitchord.ui.motion.AppMotion
 import dev.chrisbanes.haze.HazeState
 import dev.chrisbanes.haze.materials.ExperimentalHazeMaterialsApi
 import dev.chrisbanes.haze.materials.HazeMaterials
@@ -578,55 +579,11 @@ fun MiniPlayer(
                     },
                     modifier = Modifier.size(GLYPH_SLOT),
                 ) {
-                    // The glyph changes its mind rather than being replaced:
-                    // one shape grows out of the other, the same way the full
-                    // player's transport does it. A swap here is small on
-                    // screen, but it is the button people press most and the
-                    // one they watch while they press it.
-                    val pause by animateFloatAsState(
-                        targetValue = if (isPlaying) 1f else 0f,
-                        animationSpec = tween(
-                            durationMillis = 200,
-                            easing = FastOutSlowInEasing,
-                        ),
-                        label = "miniTransportShape",
+                    MiniPlayPauseGlyph(
+                        isPlaying = isPlaying,
+                        tint = MaterialTheme.colorScheme.onBackground,
+                        modifier = Modifier.size(GLYPH_SIZE),
                     )
-                    val transportLabel = stringResource(if (isPlaying) R.string.pause else R.string.play)
-                    Box(
-                        modifier = Modifier
-                            .size(GLYPH_SIZE)
-                            .clearAndSetSemantics {
-                                contentDescription = transportLabel
-                            },
-                        contentAlignment = Alignment.Center,
-                    ) {
-                        Icon(
-                            imageVector = Icons.Rounded.PlayArrow,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onBackground,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .graphicsLayer {
-                                    val s = 1f + 0.16f * pause
-                                    scaleX = s
-                                    scaleY = s
-                                    alpha = 1f - pause
-                                },
-                        )
-                        Icon(
-                            imageVector = Icons.Rounded.Pause,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onBackground,
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .graphicsLayer {
-                                    val s = 0.84f + 0.16f * pause
-                                    scaleX = s
-                                    scaleY = s
-                                    alpha = pause
-                                },
-                        )
-                    }
                 }
             }
             Spacer(Modifier.width(TRANSPORT_GAP))
@@ -667,6 +624,49 @@ internal fun MiniPlayerNextGlyph(tint: Color) {
             .size(NEXT_GLYPH_SIZE)
             .graphicsLayer { scaleY = 0.85f },
     )
+}
+
+/** Shared play/pause morph for every mini-player presentation. */
+@Composable
+internal fun MiniPlayPauseGlyph(isPlaying: Boolean, tint: Color, modifier: Modifier = Modifier) {
+    val motionMode by AppSettings.effectiveMotionMode.collectAsStateWithLifecycle()
+    val pause by animateFloatAsState(
+        targetValue = if (isPlaying) 1f else 0f,
+        animationSpec = AppMotion.tween(motionMode, fullMs = 200, reducedMs = 120),
+        label = "miniTransportShape",
+    )
+    val transportLabel = stringResource(if (isPlaying) R.string.pause else R.string.play)
+    Box(
+        modifier = modifier.clearAndSetSemantics { contentDescription = transportLabel },
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = Icons.Rounded.PlayArrow,
+            contentDescription = null,
+            tint = tint,
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    val scale = 1f + 0.16f * pause
+                    scaleX = scale
+                    scaleY = scale
+                    alpha = 1f - pause
+                },
+        )
+        Icon(
+            imageVector = Icons.Rounded.Pause,
+            contentDescription = null,
+            tint = tint,
+            modifier = Modifier
+                .fillMaxSize()
+                .graphicsLayer {
+                    val scale = 0.84f + 0.16f * pause
+                    scaleX = scale
+                    scaleY = scale
+                    alpha = pause
+                },
+        )
+    }
 }
 
 private val NEXT_GLYPH_SIZE = 25.dp

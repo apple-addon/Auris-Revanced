@@ -33,7 +33,7 @@ import com.music.bitchord.ui.graphics.toImageBitmap
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.music.bitchord.ui.graphics.ColorUtils
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.music.bitchord.ui.motion.rememberDecorativeMotionEnabled
 import coil3.SingletonImageLoader
 import coil3.request.ImageRequest
 import coil3.request.SuccessResult
@@ -111,13 +111,12 @@ fun MeshGradientBackground(
     blackWash: () -> Float = { 0f },
     whiteWash: () -> Float = { 0f },
 ) {
-    val reduceAnimation by PlayerSettings.reduceAnimation.collectAsStateWithLifecycle()
+    val decorativeMotion = rememberDecorativeMotionEnabled()
 
     val tuned = palette.drawnColors()
 
-    // Each colour slot crossfades independently when the track (palette) changes,
-    // unless "reduce animation" is on, in which case colours snap straight to target.
-    val colorSpec: AnimationSpec<Color> = if (reduceAnimation || !animated) snap() else tween(1400)
+    // Palette changes remain immediate when this surface cannot be seen.
+    val colorSpec: AnimationSpec<Color> = if (!decorativeMotion || !animated) snap() else tween(1400)
     val animatedColors = tuned.mapIndexed { index, color ->
         animateColorAsState(color, colorSpec, label = "meshColor$index").value
     }
@@ -126,9 +125,9 @@ fun MeshGradientBackground(
     // Read in the draw lambda, not here: an Animatable read during draw
     // invalidates only the drawing, leaving composition out of the loop.
     val phase = remember { Animatable(0f) }
-    LaunchedEffect(trackKey, reduceAnimation, continuous, animated) {
+    LaunchedEffect(trackKey, decorativeMotion, continuous, animated) {
         when {
-            !animated || reduceAnimation -> phase.snapTo(0f)
+            !animated || !decorativeMotion -> phase.snapTo(0f)
             // A full turn at a time, restarted rather than looped with an
             // infinite spec: the blobs' speeds are irrational multiples of each
             // other, so the pattern never repeats, and a linear phase keeps the
@@ -252,8 +251,9 @@ fun rememberArtworkColors(imageUrl: String?, canvasFrame: ImageBitmap? = null): 
         // Reject near-black frames (first read after surface recreation, before
         // ExoPlayer decodes real content).  A dark sleeve will still exceed the
         // threshold because compression noise pushes mean luminance above ~12.
-        if (isLikelyBlackFrame(frame)) return@LaunchedEffect
-        val colors = withContext(Dispatchers.Default) { paletteOf(frame) }
+        val colors = withContext(Dispatchers.Default) {
+            if (isLikelyBlackFrame(frame)) null else paletteOf(frame)
+        } ?: return@LaunchedEffect
         palette = MeshPalette(colors)
     }
     return palette

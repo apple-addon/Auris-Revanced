@@ -129,6 +129,9 @@ class PlayerSheetMotion(
         }
         settle?.cancel()
         closing = false
+        // The page may scroll or fold while the panel travels. One open/close
+        // uses one pill rect; otherwise the mini row visibly stretches.
+        dock.beginPanelTravel()
         val travel = travel()
         held = travel
         // The raise is motion from its first frame: the docked artwork is
@@ -161,6 +164,7 @@ class PlayerSheetMotion(
         closing = true
         settle?.cancel()
         dismissPull = false
+        dock.beginPanelTravel()
         val from = position().takeUnless { it.isNaN() } ?: run {
             dismissQuietly()
             return
@@ -180,6 +184,7 @@ class PlayerSheetMotion(
             if (delta >= 0f || shown()) return
             settle?.cancel()
             closing = false
+            dock.beginPanelTravel()
             held = travel()
             pullStartAt = held
             pullStartNanos = System.nanoTime()
@@ -270,6 +275,7 @@ class PlayerSheetMotion(
         settle?.cancel()
         held = Float.NaN
         laidOut = false
+        dock.endPanelTravel()
         // The net under every other clear: whatever ended here — the close
         // finishing, a slide cancelled by the host tearing the panel down
         // mid-gesture, a configuration change — the motion is over and the
@@ -306,6 +312,7 @@ class PlayerSheetMotion(
     private fun dismissQuietly() {
         // The pill comes back while the panel is still there to cover for it.
         dock.releasePanel()
+        dock.endPanelTravel()
         setShown(false)
         // However the close went, the motion is over with it.
         GlassMotion.sheet.settled()

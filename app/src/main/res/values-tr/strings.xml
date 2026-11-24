@@ -1622,4 +1622,10 @@
         <item quantity="one">%d track is not in Apple Music and was left out</item>
         <item quantity="other">%d tracks are not in Apple Music and were left out</item>
     </plurals>
+    <string name="animations">Animasyonlar</string>
+    <string name="motion_full">Tam</string>
+    <string name="motion_reduced">Azaltılmış</string>
+    <string name="motion_off">Kapalı</string>
+    <string name="motion_mode_subtitle">Tam, azaltılmış veya kapalı. Android hareket ve pil ayarlarına uyulur.</string>
+    <string name="motion_system_override">Sistem hareket azaltma veya Pil Tasarrufu şu anda animasyonları sınırlıyor.</string>
 </resources>

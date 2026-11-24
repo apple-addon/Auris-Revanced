@@ -22,6 +22,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.R
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.AppUi
+import com.music.bitchord.data.settings.MotionMode
 import com.music.bitchord.data.settings.ThemeMode
 import com.music.bitchord.ui.components.isGlassSupported
 import com.music.bitchord.ui.theme.AppFonts
@@ -35,7 +36,8 @@ internal fun AppearanceSettings(
 ) {
     val liquidGlassHaptics by AppSettings.liquidGlassHaptics.collectAsStateWithLifecycle()
     val hideStatusBarInPlayer by AppSettings.hideStatusBarInPlayer.collectAsStateWithLifecycle()
-    val reduceAnimation by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
+    val motionMode by AppSettings.motionMode.collectAsStateWithLifecycle()
+    val effectiveMotionMode by AppSettings.effectiveMotionMode.collectAsStateWithLifecycle()
     val reduceDynamicBlur by AppSettings.reduceDynamicBlur.collectAsStateWithLifecycle()
     val liquidGlass by AppSettings.liquidGlass.collectAsStateWithLifecycle()
     val liquidGlassIntensity by AppSettings.liquidGlassIntensity.collectAsStateWithLifecycle()
@@ -71,19 +73,28 @@ internal fun AppearanceSettings(
                 modifier = Modifier.padding(start = ROW_INSET, end = ROW_INSET, bottom = 14.dp),
             )
         }
-        val reduceAnimationTitle = stringResource(R.string.reduce_animation)
-        row(reduceAnimationTitle, "motion") {
+        val animationsTitle = stringResource(R.string.animations)
+        row(animationsTitle, "motion", "animation", "battery saver", "reduced motion") {
             SettingsRow(
                 icon = Icons.Rounded.MotionPhotosOff,
-                title = reduceAnimationTitle,
-                subtitle = stringResource(R.string.reduce_animation_subtitle),
-                trailing = {
-                    SettingsSwitch(
-                        checked = reduceAnimation,
-                        onCheckedChange = AppSettings::setReduceAnimation,
-                    )
-                },
-                onClick = { AppSettings.setReduceAnimation(!reduceAnimation) },
+                title = animationsTitle,
+                subtitle = stringResource(
+                    if (motionMode == effectiveMotionMode) {
+                        R.string.motion_mode_subtitle
+                    } else {
+                        R.string.motion_system_override
+                    },
+                ),
+            )
+            SegmentedControl(
+                options = listOf(
+                    stringResource(R.string.motion_full),
+                    stringResource(R.string.motion_reduced),
+                    stringResource(R.string.motion_off),
+                ),
+                selectedIndex = MotionMode.entries.indexOf(motionMode),
+                onSelect = { AppSettings.setMotionMode(MotionMode.entries[it]) },
+                modifier = Modifier.padding(start = ROW_INSET, end = ROW_INSET, bottom = 14.dp),
             )
         }
         val reduceDynamicBlurTitle = stringResource(R.string.reduce_dynamic_blur)

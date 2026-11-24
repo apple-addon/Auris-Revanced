@@ -1582,4 +1582,10 @@
         <item quantity="one">%d track is not in Apple Music and was left out</item>
         <item quantity="other">%d tracks are not in Apple Music and were left out</item>
     </plurals>
+    <string name="animations">Hoạt ảnh</string>
+    <string name="motion_full">Đầy đủ</string>
+    <string name="motion_reduced">Giảm</string>
+    <string name="motion_off">Tắt</string>
+    <string name="motion_mode_subtitle">Đầy đủ, giảm hoặc tắt. Cài đặt chuyển động và pin của Android được tôn trọng.</string>
+    <string name="motion_system_override">Chế độ giảm chuyển động của hệ thống hoặc Tiết kiệm pin đang giới hạn hoạt ảnh.</string>
 </resources>

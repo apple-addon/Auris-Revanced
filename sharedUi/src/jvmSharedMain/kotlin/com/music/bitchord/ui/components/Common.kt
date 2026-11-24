@@ -3,6 +3,7 @@ package com.music.bitchord.ui.components
 import com.music.bitchord.ui.LocalPullToRefreshEnabled
 import com.music.bitchord.ui.AppUiHost
 import com.music.bitchord.ui.AppUi
+import com.music.bitchord.ui.motion.rememberDecorativeMotionEnabled
 import com.music.bitchord.sharedui.resources.*
 import org.jetbrains.compose.resources.stringResource
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -34,6 +35,7 @@ import androidx.compose.material3.SwipeToDismissBoxState
 import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -370,12 +372,18 @@ fun SongRow(
         return
     }
 
+    val playNext by AppUi.host.swipeToPlayNext.collectAsStateWithLifecycle()
+    val swipeActive by remember(swipeState) {
+        derivedStateOf {
+            swipeState.dismissDirection != SwipeToDismissBoxValue.Settled
+        }
+    }
     // The row reveals "Queue" from the first pixel of the drag, but it only
     // *commits* past 45% of the width — so without this the label is a promise
     // the finger can't check. One light tick at the crossing is the whole point:
-    // let go now and it queues.
-    LaunchedEffect(swipeState, boxWidth) {
-        if (boxWidth <= 0f) return@LaunchedEffect
+    // let go now and it queues. At rest there is no offset flow to collect.
+    LaunchedEffect(swipeState, boxWidth, swipeActive) {
+        if (!swipeActive || boxWidth <= 0f) return@LaunchedEffect
         val armAt = boxWidth * 0.45f
         var armed = false
         snapshotFlow { try { swipeState.requireOffset() } catch (e: Exception) { 0f } }
@@ -397,7 +405,7 @@ fun SongRow(
     SwipeToDismissBox(
         state = swipeState,
         modifier = modifier.onSizeChanged { boxWidth = it.width.toFloat() },
-        backgroundContent = { QueueSwipeBackground(swipeState) },
+        backgroundContent = { QueueSwipeBackground(swipeState, playNext) },
     ) {
         SongRowContent(
             song = song,
@@ -419,8 +427,7 @@ fun SongRow(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun QueueSwipeBackground(swipeState: SwipeToDismissBoxState) {
-    val playNext by AppUi.host.swipeToPlayNext.collectAsStateWithLifecycle()
+private fun QueueSwipeBackground(swipeState: SwipeToDismissBoxState, playNext: Boolean) {
     Row(
         modifier = Modifier
             .fillMaxSize()
@@ -675,13 +682,13 @@ fun SearchPlayingBars(modifier: Modifier = Modifier) {
     // recomposed the marker — and sized three boxes again — on every frame of
     // the animation; read in [drawBehind] a frame costs one redraw of the
     // marker's own layer and nothing else.
-    val reduceAnimation by com.music.bitchord.ui.player.PlayerSettings.reduceAnimation
-        .collectAsStateWithLifecycle()
-    val heights: List<State<Float>> = if (reduceAnimation) {
+    val motionEnabled = rememberDecorativeMotionEnabled()
+    val heights: List<State<Float>> = if (!motionEnabled) {
         STILL_BAR_HEIGHTS
     } else {
+        // One scheduler owns all three bars, rather than three infinite clocks.
+        val transition = rememberInfiniteTransition(label = "search playing bars")
         listOf(0.38f, 0.78f, 0.52f).mapIndexed { index, minimum ->
-            val transition = rememberInfiniteTransition(label = "search playing bar $index")
             transition.animateFloat(
                 initialValue = minimum,
                 targetValue = 1f - (index * 0.12f),

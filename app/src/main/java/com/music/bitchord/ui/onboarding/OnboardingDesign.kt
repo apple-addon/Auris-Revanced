@@ -70,6 +70,7 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.ui.components.lightweightLiquidGlass
+import com.music.bitchord.ui.rememberIsForeground
 import kotlinx.coroutines.isActive
 import kotlin.math.abs
 
@@ -517,9 +518,10 @@ internal fun OnbDivider() {
 internal fun rememberDeviceTilt(maxDegrees: Float = 5f): () -> Pair<Float, Float> {
     val context = LocalContext.current
     val reduceAnimation by AppSettings.reduceAnimation.collectAsStateWithLifecycle()
+    val foreground = rememberIsForeground()
     val tilt = remember { mutableStateOf(0f to 0f) }
-    DisposableEffect(context, reduceAnimation) {
-        if (reduceAnimation) return@DisposableEffect onDispose { }
+    DisposableEffect(context, reduceAnimation, foreground) {
+        if (reduceAnimation || !foreground) return@DisposableEffect onDispose { }
         val manager = runCatching {
             context.getSystemService(Context.SENSOR_SERVICE) as? SensorManager
         }.getOrNull()

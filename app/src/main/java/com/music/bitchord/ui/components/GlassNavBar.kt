@@ -423,9 +423,8 @@ internal fun GlassNowPlaying(
                     },
                     modifier = Modifier.size(glyphSlot),
                 ) {
-                    Icon(
-                        imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                        contentDescription = stringResource(if (isPlaying) R.string.pause else R.string.play),
+                    MiniPlayPauseGlyph(
+                        isPlaying = isPlaying,
                         tint = contentColor,
                         modifier = Modifier.size(glyphSize),
                     )

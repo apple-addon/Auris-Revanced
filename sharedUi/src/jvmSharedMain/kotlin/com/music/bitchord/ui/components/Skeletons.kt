@@ -32,14 +32,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawWithCache
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import com.music.bitchord.ui.player.PlayerSettings
+import com.music.bitchord.ui.motion.rememberDecorativeMotionEnabled
 
 /**
  * Grey stand-ins for content still on the wire, laid out to the same metrics as
@@ -65,12 +64,12 @@ private val SubtitleWidths = listOf(0.34f, 0.44f, 0.27f, 0.38f, 0.31f)
  */
 @Composable
 fun ShimmerBox(modifier: Modifier = Modifier, shape: Shape = BlockShape) {
-    val reduceAnimation by PlayerSettings.reduceAnimation.collectAsStateWithLifecycle()
+    val motionEnabled = rememberDecorativeMotionEnabled()
     val base = MaterialTheme.colorScheme.surfaceVariant
     val highlight = MaterialTheme.colorScheme.onSurfaceVariant
         .copy(alpha = 0.16f)
         .compositeOver(base)
-    val sweep: State<Float> = if (reduceAnimation) {
+    val sweep: State<Float> = if (!motionEnabled) {
         // Still a block on a loading page, but without a full-width gradient
         // travelling it on every frame until the network answers.
         remember { mutableFloatStateOf(0.5f) }

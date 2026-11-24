@@ -14,6 +14,7 @@ import com.music.bitchord.data.settings.AutomixPanelState
 import com.music.bitchord.data.settings.LastPlayerScreen
 import com.music.bitchord.data.settings.SmartAnalysis
 import com.music.bitchord.data.settings.MixBlend
+import com.music.bitchord.data.settings.MotionMode
 import com.music.bitchord.data.settings.TransitionWindow
 import com.music.bitchord.playback.smart.AutomixOverride
 import dev.chrisbanes.haze.HazeState
@@ -223,6 +224,9 @@ interface PlayerSettingsSource {
     val prioritizeSpotifyCanvas: StateFlow<Boolean>
     /** Whether Spotify Canvas is looked up at all; the other providers still are. */
     val spotifyCanvasEnabled: StateFlow<Boolean>
+    /** Effective motion after user preference and platform power/motion constraints. */
+    val motionMode: StateFlow<MotionMode>
+    /** Legacy decorative-motion switch; true for REDUCED and OFF. */
     val reduceAnimation: StateFlow<Boolean>
     val reduceDynamicBlur: StateFlow<Boolean>
     val showNerdStats: StateFlow<Boolean>

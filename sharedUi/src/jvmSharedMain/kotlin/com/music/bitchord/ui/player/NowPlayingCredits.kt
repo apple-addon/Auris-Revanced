@@ -231,6 +231,7 @@ internal fun PortraitCredits(
                 } else {
                     LocalPlayerAlphas.current.tertiary
                 },
+                modifier = Modifier.favoritePop(liked),
             )
             Spacer(Modifier.width(2.dp))
         }

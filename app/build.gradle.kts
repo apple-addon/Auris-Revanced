@@ -91,15 +91,15 @@ val targetAbis = (providers.gradleProperty("auris.abis").orNull ?: "arm64-v8a")
     .filter { it.isNotEmpty() }
 val universalApk = providers.gradleProperty("auris.universal").orNull?.toBoolean() ?: false
 
-/*
- * Set by the APK workflow's build job only. Fatal-severity lint (lintVital) is
- * the release gate AGP wires into assembleRelease, and it costs ~200s on top of
- * the compile; the workflow runs the identical task in a parallel `lint` job,
- * so this flag takes it out of the APK build without taking it out of the
- * pipeline. Nothing else passes it, so every local build and every other lane
- * still runs lintVital as AGP intends.
- */
+/* Optional compile-time shortcut; release builds are optimized by default. */
 val fastApk = providers.gradleProperty("auris.fastApk").orNull == "true"
+/*
+ * Set by the APK workflows' build job only. Fatal-severity lint (lintVital)
+ * still runs in their required parallel `lint` job. Keeping this separate from
+ * [fastApk] means an optimized APK does not run the same gate twice. Local
+ * builds and every other lane retain AGP's normal lintVital wiring.
+ */
+val skipLintVital = providers.gradleProperty("auris.skipLintVital").orNull == "true"
 // Audio-probe tracing is only useful in the fast test build; it stays out of
 // the shipping build's BuildConfig.
 val audioProbe = fastApk
@@ -110,8 +110,8 @@ android {
     compileSdk = 37
 
     lint {
-        // See [fastApk]. The gate itself still runs — in the `lint` job.
-        checkReleaseBuilds = !fastApk
+        // The workflow gate itself still runs in its required `lint` job.
+        checkReleaseBuilds = !(fastApk || skipLintVital)
     }
 
     defaultConfig {

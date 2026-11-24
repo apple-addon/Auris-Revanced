@@ -41,6 +41,7 @@ import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.ui.components.AppleTokens
 import com.music.bitchord.ui.components.PAGE_GUTTER
 import com.music.bitchord.ui.components.longPressMenuClickable
+import com.music.bitchord.ui.components.verticalShelfPassThrough
 
 /** One New element, with the same controller kind and display style Apple sent. */
 @Composable
@@ -187,7 +188,7 @@ private fun AppleEditorialHeroes(
     onItemLongPress: ((ShelfItem) -> Unit)?,
 ) {
     LazyRow(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().verticalShelfPassThrough(),
         contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
@@ -281,7 +282,7 @@ private fun AppleEditorialTrackPages(
     onItemClick: (ShelfItem, String) -> Unit,
 ) {
     LazyRow(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().verticalShelfPassThrough(),
         contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -339,7 +340,7 @@ private fun AppleNewExpandedPages(
     onItemLongPress: ((ShelfItem) -> Unit)?,
 ) {
     LazyRow(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().verticalShelfPassThrough(),
         contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -373,7 +374,7 @@ private fun AppleRadioExpandedPages(
     onItemClick: (ShelfItem, String) -> Unit,
 ) {
     LazyRow(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().verticalShelfPassThrough(),
         contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
@@ -417,7 +418,7 @@ private fun AppleEditorialCards(
     videoCards: Boolean,
 ) {
     LazyRow(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().verticalShelfPassThrough(),
         contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {
@@ -539,7 +540,7 @@ private fun AppleRadioOnAir(
             }
         }
         LazyRow(
-            modifier = Modifier.fillMaxWidth().padding(top = 10.dp),
+            modifier = Modifier.fillMaxWidth().padding(top = 10.dp).verticalShelfPassThrough(),
             contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {

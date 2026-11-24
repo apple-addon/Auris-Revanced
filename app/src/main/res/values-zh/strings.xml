@@ -1642,4 +1642,10 @@
         <item quantity="one">%d track is not in Apple Music and was left out</item>
         <item quantity="other">%d tracks are not in Apple Music and were left out</item>
     </plurals>
+    <string name="animations">动画</string>
+    <string name="motion_full">完整</string>
+    <string name="motion_reduced">减弱</string>
+    <string name="motion_off">关闭</string>
+    <string name="motion_mode_subtitle">完整、减弱或关闭。尊重 Android 的动画和电池设置。</string>
+    <string name="motion_system_override">系统的减弱动态效果或省电模式正在限制动画。</string>
 </resources>

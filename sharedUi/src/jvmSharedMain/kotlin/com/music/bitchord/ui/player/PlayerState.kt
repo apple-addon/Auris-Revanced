@@ -8,6 +8,7 @@ import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.size
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.State
@@ -30,9 +31,16 @@ import com.music.bitchord.data.model.Song
 import com.music.bitchord.data.model.artworkAt
 import kotlin.math.abs
 import kotlin.math.roundToInt
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.updateAndGet
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * The looping clip some releases publish alongside their cover, for [song], or
@@ -323,23 +331,101 @@ internal class PlayerVolume(
     var dragging by mutableStateOf(false)
         private set
 
+    private data class Change(val level: Float, val released: Boolean)
+
+    private val changes = MutableStateFlow<Change?>(null)
+    private val writeLock = Any()
+    private var lastWrittenChange: Change? = null
+    private var worker: Job? = null
+
+    @Volatile
+    private var closed = false
+
+    init {
+        startWorker()
+    }
+
     fun drag(to: Float) {
         dragging = true
-        // Follow the finger exactly; only external changes tween.
-        scope.launch { level.snapTo(to) }
-        system.set(to)
+        changes.value = Change(to, released = false)
     }
 
     fun release() {
         dragging = false
+        changes.updateAndGet { it?.copy(released = true) } ?: return
+        // The exact final value is not left to a timer or a coroutine that
+        // composition disposal could cancel. writeLatest also serializes this
+        // with any trailing write already in flight.
+        writeLatest(force = true)
+    }
+
+    private fun writeLatest(force: Boolean = false) {
+        synchronized(writeLock) {
+            if (closed) return@synchronized
+            val latest = changes.value ?: return@synchronized
+            if (!force && latest == lastWrittenChange) return@synchronized
+            system.set(latest.level)
+            lastWrittenChange = latest
+        }
+    }
+
+    private fun startWorker() {
+        synchronized(writeLock) {
+            if (closed || !scope.isActive) return
+            worker = scope.launch { drainChanges() }
+        }
+    }
+
+    fun close() {
+        val running = synchronized(writeLock) {
+            if (closed) return
+            closed = true
+            worker
+        }
+        running?.cancel()
+    }
+
+    private suspend fun nextChange(previous: Change?): Change =
+        changes.first { it != null && it !== previous }!!
+
+    private suspend fun drainChanges() {
+        try {
+            var change = nextChange(previous = null)
+            while (true) {
+                // Visuals are never sampled: every value the worker receives
+                // follows the finger at once; only platform writes are windowed.
+                level.snapTo(change.level)
+                if (!change.released) {
+                    withTimeoutOrNull(VOLUME_SET_INTERVAL_MS) {
+                        while (!change.released) {
+                            change = nextChange(change)
+                            level.snapTo(change.level)
+                        }
+                    }
+                    // A held finger still gets the latest level, while a burst
+                    // costs at most one set per window.
+                    if (!change.released) writeLatest()
+                }
+                change = nextChange(change)
+            }
+        } catch (cancelled: CancellationException) {
+            if (closed || !scope.isActive) throw cancelled
+            // A newer hardware tween can cancel Animatable's calling job rather
+            // than just snapTo. StateFlow retains the newest request for the
+            // replacement worker, including a release caught in that race.
+            startWorker()
+        }
     }
 }
+
+private const val VOLUME_SET_INTERVAL_MS = 40L
 
 @Composable
 internal fun rememberPlayerVolume(): PlayerVolume {
     val system = PlayerPlatform.host.volume
     val scope = rememberCoroutineScope()
     val volume = remember(system) { PlayerVolume(system, scope) }
+    DisposableEffect(volume) { onDispose(volume::close) }
     // Hardware volume keys and the system panel change the level behind our
     // back; the host follows them, and so does the bar.
     val systemVolume by system.level.collectAsStateWithLifecycle()

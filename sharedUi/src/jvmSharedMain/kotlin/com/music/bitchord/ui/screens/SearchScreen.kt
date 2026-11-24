@@ -93,10 +93,14 @@ import com.music.bitchord.ui.components.PlayingAccent
 import com.music.bitchord.ui.components.ROW_DIVIDER_INSET
 import com.music.bitchord.ui.components.SearchField
 import com.music.bitchord.ui.components.ShelfRow
+import com.music.bitchord.ui.motion.AppMotion
+import com.music.bitchord.ui.motion.rememberMotionMode
+import com.music.bitchord.data.settings.MotionMode
 import com.music.bitchord.ui.components.SongRow
 import com.music.bitchord.ui.components.SearchPlayingBars
 import com.music.bitchord.ui.components.thumbnailBorder
 import com.music.bitchord.ui.components.songListSkeleton
+import com.music.bitchord.ui.components.verticalShelfPassThrough
 import com.music.bitchord.ui.haptics.Haptic
 import com.music.bitchord.ui.haptics.rememberHaptics
 import java.util.Locale
@@ -190,6 +194,7 @@ fun SearchScreen(
      */
     sourceSwitcher: (@Composable () -> Unit)? = null,
 ) {
+    val motionMode = rememberMotionMode()
     val focusRequester = remember { FocusRequester() }
     val focusManager = LocalFocusManager.current
     val keyboardController = LocalSoftwareKeyboardController.current
@@ -235,6 +240,10 @@ fun SearchScreen(
             if (!loadingMore && total > 0 && lastVisible >= total - 4) onLoadMore()
         }
     }
+    // Playback order, the promoted hit and section membership belong to the
+    // response/filter snapshot, not to each lazy item's composition.
+    val resultRows = (results as? UiState.Success)?.data.orEmpty()
+    val presentation = remember(resultRows, filter) { searchPresentation(resultRows, filter) }
     Column(modifier = modifier.fillMaxSize()) {
         // Search field and filter tabs stay fixed at the top, outside the
         // scrolling list, so they're always reachable rather than scrolling
@@ -346,6 +355,7 @@ fun SearchScreen(
                                 onClick = onHistoryClick,
                                 onRemove = onHistoryRemove,
                                 onClear = onHistoryClear,
+                                motionMode = motionMode,
                             )
                         }
                         if (history.isEmpty()) {
@@ -367,14 +377,8 @@ fun SearchScreen(
                 results is UiState.Loading -> songListSkeleton(circular = filter == SearchFilter.ARTISTS)
                 results is UiState.Error -> item { MessageState(results.message) }
                 results is UiState.Success -> {
-                    val tracks = results.data
-                        .mapNotNull { row -> when (row) {
-                            is SearchResult.TopTrack -> row.song
-                            is SearchResult.Track -> row.song
-                            is SearchResult.Browse -> null
-                            else -> null
-                        } }
-                    val topResult = results.data.filterIsInstance<SearchResult.TopTrack>().firstOrNull()
+                    val tracks = presentation.tracks
+                    val topResult = presentation.topResult
                     if (filter == SearchFilter.ALL && topResult != null) {
                         item(key = "search:top-result:${topResult.song.videoId}") {
                             TopResultCard(
@@ -385,7 +389,7 @@ fun SearchScreen(
                             )
                         }
                     }
-                    searchSections(results.data, filter).forEach { section ->
+                    presentation.sections.forEach { section ->
                         section.title?.let { title ->
                             item(key = "search-section:$title") {
                                 Text(
@@ -454,18 +458,57 @@ fun SearchScreen(
     }
 }
 
-private data class SearchSection(val title: String?, val rows: List<SearchResult>)
+internal data class SearchSection(val title: String?, val rows: List<SearchResult>)
 
-/** The unfiltered page is useful only when its mixed result types are readable at a glance. */
-private fun searchSections(rows: List<SearchResult>, filter: SearchFilter): List<SearchSection> {
-    if (filter != SearchFilter.ALL) return listOf(SearchSection(null, rows))
-    return listOf(
-        SearchSection("Songs", rows.filterIsInstance<SearchResult.Track>()),
-        SearchSection("Artists", rows.filterIsInstance<SearchResult.Browse>().filter { it.item.type == BrowseType.ARTIST }),
-        SearchSection("Albums", rows.filterIsInstance<SearchResult.Browse>().filter { it.item.type == BrowseType.ALBUM }),
-        SearchSection("Playlists", rows.filterIsInstance<SearchResult.Browse>().filter { it.item.type == BrowseType.PLAYLIST }),
-        SearchSection("More", rows.filterIsInstance<SearchResult.Browse>().filter { it.item.type == BrowseType.OTHER }),
-    ).filter { it.rows.isNotEmpty() }
+internal data class SearchPresentation(
+    val tracks: List<Song>,
+    val topResult: SearchResult.TopTrack?,
+    val sections: List<SearchSection>,
+)
+
+/**
+ * Everything the result list needs from one snapshot, partitioned in one pass.
+ * The unfiltered page is useful only when its mixed result types are readable at a glance.
+ */
+internal fun searchPresentation(rows: List<SearchResult>, filter: SearchFilter): SearchPresentation {
+    val tracks = mutableListOf<Song>()
+    var topResult: SearchResult.TopTrack? = null
+    val songs = mutableListOf<SearchResult>()
+    val artists = mutableListOf<SearchResult>()
+    val albums = mutableListOf<SearchResult>()
+    val playlists = mutableListOf<SearchResult>()
+    val more = mutableListOf<SearchResult>()
+    rows.forEach { row ->
+        when (row) {
+            is SearchResult.TopTrack -> {
+                tracks += row.song
+                if (topResult == null) topResult = row
+            }
+            is SearchResult.Track -> {
+                tracks += row.song
+                songs += row
+            }
+            is SearchResult.Browse -> when (row.item.type) {
+                BrowseType.ARTIST -> artists += row
+                BrowseType.ALBUM -> albums += row
+                BrowseType.PLAYLIST -> playlists += row
+                BrowseType.OTHER -> more += row
+                BrowseType.PODCAST -> Unit
+            }
+        }
+    }
+    val sections = if (filter == SearchFilter.ALL) {
+        listOf(
+            SearchSection("Songs", songs),
+            SearchSection("Artists", artists),
+            SearchSection("Albums", albums),
+            SearchSection("Playlists", playlists),
+            SearchSection("More", more),
+        ).filter { it.rows.isNotEmpty() }
+    } else {
+        listOf(SearchSection(null, rows))
+    }
+    return SearchPresentation(tracks = tracks, topResult = topResult, sections = sections)
 }
 
 /**
@@ -813,6 +856,7 @@ private fun LazyListScope.recentSearches(
     onClick: (SearchHistoryEntity) -> Unit,
     onRemove: (String) -> Unit,
     onClear: () -> Unit,
+    motionMode: MotionMode,
 ) {
     item(key = "recent:header") {
         Row(
@@ -845,6 +889,15 @@ private fun LazyListScope.recentSearches(
             isPlaying = isPlaying,
             onClick = { onClick(entity) },
             onRemove = { onRemove(entity.id) },
+            modifier = if (motionMode == MotionMode.OFF) {
+                Modifier
+            } else {
+                Modifier.animateItem(
+                    fadeInSpec = null,
+                    fadeOutSpec = null,
+                    placementSpec = AppMotion.tween(motionMode),
+                )
+            },
         )
     }
 }
@@ -860,9 +913,10 @@ private fun RecentSearchEntityRow(
     isPlaying: Boolean,
     onClick: () -> Unit,
     onRemove: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
             .padding(start = PAGE_GUTTER, end = 8.dp, top = 6.dp, bottom = 6.dp),
@@ -979,6 +1033,7 @@ private fun SearchFilterTabs(
         modifier = Modifier
             .fillMaxWidth()
             .horizontalScroll(rememberScrollState())
+            .verticalShelfPassThrough()
             .padding(horizontal = PAGE_GUTTER, vertical = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalAlignment = Alignment.CenterVertically,

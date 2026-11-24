@@ -3,6 +3,7 @@ package com.music.bitchord.ui.player
 import com.music.bitchord.sharedui.resources.*
 import com.music.bitchord.ui.components.ExplicitSongTitle
 
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -23,6 +24,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyItemScope
+import androidx.compose.foundation.lazy.LazyListItemInfo
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
@@ -78,6 +80,9 @@ import com.music.bitchord.ui.icons.BitChordIcons
 import com.music.bitchord.data.model.QueueTier
 import com.music.bitchord.data.model.Song
 import com.music.bitchord.playback.autoplaySectionStart
+import com.music.bitchord.ui.motion.AppMotion
+import com.music.bitchord.ui.motion.rememberMotionMode
+import com.music.bitchord.data.settings.MotionMode
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
@@ -120,7 +125,16 @@ internal fun keepScrollInList(listState: LazyListState) = object : NestedScrollC
  * newly current row and the AutoPlay heading trade places, and a low-stiffness
  * spring is still visibly settling that trade long after the track changed.
  */
-private val QUEUE_ROW_MOTION = tween<IntOffset>(durationMillis = 200, easing = FastOutSlowInEasing)
+private fun LazyItemScope.queueMotion(motionMode: MotionMode): Modifier =
+    if (motionMode == MotionMode.OFF) {
+        Modifier
+    } else {
+        Modifier.animateItem(
+            fadeInSpec = null,
+            fadeOutSpec = null,
+            placementSpec = AppMotion.tween(motionMode, fullMs = 200, reducedMs = 140),
+        )
+    }
 
 /**
  * Softens the list where it meets the header and the scrubber.
@@ -207,10 +221,6 @@ private fun splitQueue(queue: List<Song>, currentIndex: Int): QueueTracks {
     return QueueTracks(track(currentIndex, "np"), user, context, autoplay)
 }
 
-/** Placement-only item motion; see [QUEUE_ROW_MOTION]. */
-private fun LazyItemScope.queueMotion(): Modifier =
-    Modifier.animateItem(fadeInSpec = null, fadeOutSpec = null, placementSpec = QUEUE_ROW_MOTION)
-
 /** The live queue, in the player itself. */
 @Composable
 internal fun InlineQueue(
@@ -241,6 +251,7 @@ internal fun InlineQueue(
     onOpenSearch: (() -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
+    val motionMode = rememberMotionMode()
     val listState = rememberLazyListState()
     LaunchedEffect(listState) {
         snapshotFlow { listState.isScrollInProgress }.collect(onScrollingChange)
@@ -263,10 +274,10 @@ internal fun InlineQueue(
     // Back to the top on a track change — snapped the first time, animated
     // after — but never mid-drag, which would pull the list from under the finger.
     var hasScrolledOnce by remember { mutableStateOf(false) }
-    LaunchedEffect(currentIndex) {
+    LaunchedEffect(currentIndex, motionMode) {
         val scrolledAway = listState.firstVisibleItemIndex != 0 || listState.firstVisibleItemScrollOffset != 0
         if (drag.held == null && nowPlaying != null && scrolledAway) {
-            if (hasScrolledOnce) {
+            if (hasScrolledOnce && motionMode != MotionMode.OFF) {
                 listState.animateScrollToItem(0)
             } else {
                 listState.scrollToItem(0)
@@ -331,7 +342,7 @@ internal fun InlineQueue(
                             onClick = { onJumpTo(nowPlaying.timelineIndex) },
                             onRemove = { onRemove(nowPlaying.timelineIndex) },
                             locked = controlsLocked,
-                            modifier = queueMotion(),
+                            modifier = queueMotion(motionMode),
                         )
                     }
                 }
@@ -339,12 +350,12 @@ internal fun InlineQueue(
                     item(key = "header-user-queue") {
                         QueueHeading(
                             title = stringResource(Res.string.next_in_queue),
-                            modifier = Modifier.padding(top = 16.dp, bottom = 6.dp).then(queueMotion()),
+                            modifier = Modifier.padding(top = 16.dp, bottom = 6.dp).then(queueMotion(motionMode)),
                         ) {
                             QueueClearButton(MaterialTheme.typography.labelLarge, controlsLocked, onClear)
                         }
                     }
-                    queueSection(tracks.user, QueueSection.USER, drag, controlsLocked, onJumpTo, onRemove)
+                    queueSection(tracks.user, QueueSection.USER, drag, controlsLocked, onJumpTo, onRemove, motionMode)
                 }
                 if (tracks.context.isNotEmpty()) {
                     item(key = "header-context") {
@@ -354,22 +365,30 @@ internal fun InlineQueue(
                             } else {
                                 stringResource(Res.string.queue)
                             },
-                            modifier = Modifier.padding(top = 16.dp, bottom = 6.dp).then(queueMotion()),
+                            modifier = Modifier.padding(top = 16.dp, bottom = 6.dp).then(queueMotion(motionMode)),
                         )
                     }
-                    queueSection(tracks.context, QueueSection.CONTEXT, drag, controlsLocked, onJumpTo, onRemove)
+                    queueSection(tracks.context, QueueSection.CONTEXT, drag, controlsLocked, onJumpTo, onRemove, motionMode)
                 }
                 if (autoplayEnabled || tracks.autoplay.isNotEmpty()) {
                     item(key = "autoplay-heading") {
-                        AutoplayHeading(hasTracks = tracks.autoplay.isNotEmpty(), modifier = queueMotion())
+                        AutoplayHeading(hasTracks = tracks.autoplay.isNotEmpty(), modifier = queueMotion(motionMode))
                     }
-                    queueSection(tracks.autoplay, QueueSection.AUTOPLAY, drag, controlsLocked, onJumpTo, onRemove)
+                    queueSection(tracks.autoplay, QueueSection.AUTOPLAY, drag, controlsLocked, onJumpTo, onRemove, motionMode)
                 }
             }
             // The held row, drawn over the list where the finger is. Positioned
             // from the finger alone, so nothing the list does underneath — a
             // swap, a relayout, a scroll — can move it.
             drag.held?.let { held ->
+                val lift = remember(held.key) { Animatable(if (motionMode == MotionMode.OFF) 1f else 0f) }
+                LaunchedEffect(held.key, motionMode) {
+                    if (motionMode == MotionMode.OFF) {
+                        lift.snapTo(1f)
+                    } else {
+                        lift.animateTo(1f, AppMotion.tween(motionMode, fullMs = 120, reducedMs = 90))
+                    }
+                }
                 Box(Modifier.matchParentSize().padding(horizontal = PLAYER_GUTTER)) {
                     InlineQueueRow(
                         song = held.song,
@@ -378,7 +397,14 @@ internal fun InlineQueue(
                         onRemove = {},
                         draggable = true,
                         lifted = true,
-                        modifier = Modifier.offset { IntOffset(0, drag.heldTop.roundToInt()) },
+                        modifier = Modifier
+                            .offset { IntOffset(0, drag.heldTop.roundToInt()) }
+                            .graphicsLayer {
+                                alpha = 0.75f + 0.25f * lift.value
+                                val scale = 1f + 0.02f * lift.value
+                                scaleX = scale
+                                scaleY = scale
+                            },
                     )
                 }
             }
@@ -399,6 +425,7 @@ private fun LazyListScope.queueSection(
     locked: Boolean,
     onJumpTo: (Int) -> Unit,
     onRemove: (Int) -> Unit,
+    motionMode: MotionMode,
 ) {
     items(rows, key = { it.key }) { track ->
         val held = drag.held?.key == track.key
@@ -417,7 +444,7 @@ private fun LazyListScope.queueSection(
             onDragStart = { drag.start(track.key, section) },
             onDrag = drag::drag,
             onDragEnd = { drag.end(track.key) },
-            modifier = if (held) Modifier.alpha(0f) else queueMotion(),
+            modifier = if (held) Modifier.alpha(0f) else queueMotion(motionMode),
         )
     }
 }
@@ -610,6 +637,21 @@ private class QueueDrag(private val listState: LazyListState) {
     /** Where the last swap sent will put the row, until the list shows it there. */
     private var awaiting: Int? = null
 
+    // QueueTracks replaces its immutable row lists after a move. Reuse each
+    // list's membership/index maps for every pointer event before that happens.
+    private var indexedRows: List<QueueTrack>? = null
+    private var indexedKeys: Set<String> = emptySet()
+    private var indexedTimeline: Map<String, Int> = emptyMap()
+
+    private fun ensureRowIndex(rows: List<QueueTrack>) {
+        if (indexedRows === rows) return
+        indexedRows = rows
+        indexedKeys = rows.mapTo(HashSet()) { it.key }
+        indexedTimeline = HashMap<String, Int>(rows.size).also { timeline ->
+            rows.forEach { track -> timeline.putIfAbsent(track.key, track.timelineIndex) }
+        }
+    }
+
     fun start(key: String, section: QueueSection) {
         val track = tracks[section].firstOrNull { it.key == key } ?: return
         val item = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.key == key } ?: return
@@ -637,6 +679,7 @@ private class QueueDrag(private val listState: LazyListState) {
     private fun settle(deltaY: Float) {
         val key = held?.key ?: return
         val rows = tracks[section]
+        ensureRowIndex(rows)
         val info = listState.layoutInfo
         val items = info.visibleItemsInfo
         val half = heldSize / 2f
@@ -665,22 +708,29 @@ private class QueueDrag(private val listState: LazyListState) {
             if (dragged.index != it) return
             awaiting = null
         }
-        val target = items
-            .filter { item -> item.key != key && rows.any { it.key == item.key } }
-            .minByOrNull { abs(it.offset + it.size / 2f - center) }
-            ?: return
+        var target: LazyListItemInfo? = null
+        var targetDistance = Float.POSITIVE_INFINITY
+        for (item in items) {
+            if (item.key == key || item.key !in indexedKeys) continue
+            val distance = abs(item.offset + item.size / 2f - center)
+            if (distance < targetDistance) {
+                target = item
+                targetDistance = distance
+            }
+        }
+        val nearest = target ?: return
         // Half a row of overlap per swap, so a row isn't traded back and forth
         // over a single pixel of travel.
-        if (abs(center - (target.offset + target.size / 2f)) > target.size / 2f) return
+        if (abs(center - (nearest.offset + nearest.size / 2f)) > nearest.size / 2f) return
         // LazyColumn keeps its place by the key of its first visible row; move
         // that row while there's list above it and the whole list follows it
         // along by a row. Waiting a few frames for the scroll to bring in the
         // next row up avoids it.
-        if (target.index == listState.firstVisibleItemIndex && listState.canScrollBackward) return
-        val from = rows.firstOrNull { it.key == key }?.timelineIndex ?: return
-        val to = rows.firstOrNull { it.key == target.key }?.timelineIndex ?: return
+        if (nearest.index == listState.firstVisibleItemIndex && listState.canScrollBackward) return
+        val from = indexedTimeline[key] ?: return
+        val to = indexedTimeline[nearest.key] ?: return
         onMove(from, to)
-        awaiting = target.index
+        awaiting = nearest.index
     }
 
     /** Only while there's a row that way to trade with, and list left to scroll. */

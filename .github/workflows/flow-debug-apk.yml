@@ -62,6 +62,8 @@ jobs:
             echo "keyPassword=$KEYSTORE_PASSWORD"
           } > keystore.properties
 
+      # Keep R8 enabled: fast, unoptimized APKs are useful for compile checks,
+      # but their Compose performance is not representative of this release lane.
       # No test step in front of this. The unit-test task compiles the app's
       # test sources and its native variant first, and those six minutes were
       # most of a draft's wall clock — for a gate that only says whether the
@@ -73,16 +75,16 @@ jobs:
       # that compiles and is wrong. Run :app:testDevDebugUnitTest locally
       # before pushing a change worth testing on a phone.
       #
-      # lintVital is not skipped — -Pauris.fastApk=true drops it from *this*
-      # invocation only, because the `lint` job below runs the same task in
-      # parallel. The `deliver` job needs both, so no artifact exists unless
+      # lintVital is not skipped — -Pauris.skipLintVital=true drops it from
+      # *this* invocation only, because the `lint` job below runs the same task
+      # in parallel. The `deliver` job needs both, so no artifact exists unless
       # lint passes. Measured: the pass costs ~200s on top of the compile, so
       # serialising it in front of the APK was the single biggest cost here.
       - name: Build minified APK
         run: |
           ./gradlew \
             --build-cache --parallel --console=plain \
-            -Pauris.fastApk=true \
+            -Pauris.skipLintVital=true \
             :app:assembleDevRelease
 
       # Staging only: the deliverable copy is uploaded by `deliver`, after the

@@ -8,6 +8,9 @@ import androidx.compose.ui.draw.drawWithContent
 import com.music.bitchord.data.model.ArtistCredit
 import com.music.bitchord.data.model.CreditSegment
 import com.music.bitchord.data.model.creditSegments
+import com.music.bitchord.ui.motion.AppMotion
+import com.music.bitchord.ui.motion.rememberMotionMode
+import com.music.bitchord.ui.motion.rememberDecorativeMotionEnabled
 import com.music.bitchord.sharedui.resources.*
 
 import androidx.compose.animation.animateContentSize
@@ -1215,6 +1218,38 @@ internal fun PlayerActionRow(
     }
 }
 
+/** Finite like-state pop; no work on first composition or unrelated updates. */
+@Composable
+internal fun Modifier.favoritePop(liked: Boolean): Modifier {
+    val motionMode = rememberMotionMode()
+    val scale = remember { Animatable(1f) }
+    var previous by remember { mutableStateOf(liked) }
+    LaunchedEffect(liked, motionMode) {
+        if (previous == liked) {
+            if (motionMode == com.music.bitchord.data.settings.MotionMode.OFF) scale.snapTo(1f)
+            return@LaunchedEffect
+        }
+        previous = liked
+        if (motionMode == com.music.bitchord.data.settings.MotionMode.OFF) {
+            scale.snapTo(1f)
+        } else {
+            scale.snapTo(0.82f)
+            scale.animateTo(
+                targetValue = 1f,
+                animationSpec = AppMotion.spring(
+                    motionMode,
+                    dampingRatio = if (motionMode == com.music.bitchord.data.settings.MotionMode.FULL) 0.72f else 1f,
+                    stiffness = 520f,
+                ),
+            )
+        }
+    }
+    return graphicsLayer {
+        scaleX = scale.value
+        scaleY = scale.value
+    }
+}
+
 /**
  * A player glyph, on a translucent disc or on nothing at all.
  *
@@ -1377,12 +1412,10 @@ private fun TransportGlyph(
                 // the other, each growing into its place, reads as the same
                 // button changing its mind.
                 if (shape == TransportShape.PLAY || shape == TransportShape.PAUSE) {
+                    val motionMode = rememberMotionMode()
                     val pause by animateFloatAsState(
                         targetValue = if (shape == TransportShape.PAUSE) 1f else 0f,
-                        animationSpec = tween(
-                            durationMillis = 220,
-                            easing = FastOutSlowInEasing,
-                        ),
+                        animationSpec = AppMotion.tween(motionMode, fullMs = 220, reducedMs = 140),
                         label = "transportShape",
                     )
                     Box(
@@ -1959,9 +1992,16 @@ internal fun MarqueeText(
             }
 
             val offsetX = remember { Animatable(0f) }
-            LaunchedEffect(text, travelPx, startDelayMillis) {
-                offsetX.snapTo(0f)
-                if (travelPx <= 0) return@LaunchedEffect
+            val motionEnabled = rememberDecorativeMotionEnabled()
+            var previousText by remember { mutableStateOf(text) }
+            var previousTravel by remember { mutableStateOf(travelPx) }
+            LaunchedEffect(text, travelPx, startDelayMillis, motionEnabled) {
+                if (previousText != text || previousTravel != travelPx) {
+                    previousText = text
+                    previousTravel = travelPx
+                    offsetX.snapTo(0f)
+                }
+                if (!motionEnabled || travelPx <= 0) return@LaunchedEffect
                 val pxPerMs = with(density) { MARQUEE_DP_PER_SEC.dp.toPx() } / 1000f
                 val scrollMs = (travelPx / pxPerMs).roundToInt().coerceAtLeast(400)
                 delay(startDelayMillis)
@@ -2078,9 +2118,16 @@ internal fun ArtistCreditsMarquee(
             }
 
             val offsetX = remember { Animatable(0f) }
-            LaunchedEffect(text, travelPx, startDelayMillis) {
-                offsetX.snapTo(0f)
-                if (travelPx <= 0) return@LaunchedEffect
+            val motionEnabled = rememberDecorativeMotionEnabled()
+            var previousText by remember { mutableStateOf(text) }
+            var previousTravel by remember { mutableStateOf(travelPx) }
+            LaunchedEffect(text, travelPx, startDelayMillis, motionEnabled) {
+                if (previousText != text || previousTravel != travelPx) {
+                    previousText = text
+                    previousTravel = travelPx
+                    offsetX.snapTo(0f)
+                }
+                if (!motionEnabled || travelPx <= 0) return@LaunchedEffect
                 val pxPerMs = with(density) { MARQUEE_DP_PER_SEC.dp.toPx() } / 1000f
                 val scrollMs = (travelPx / pxPerMs).roundToInt().coerceAtLeast(400)
                 delay(startDelayMillis)

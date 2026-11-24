@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -48,9 +49,12 @@ import com.music.bitchord.data.model.artworkAt
 import com.music.bitchord.ui.components.longPressMenuClickable
 import com.music.bitchord.ui.components.MessageState
 import com.music.bitchord.ui.components.AppleTokens
+import com.music.bitchord.ui.components.LazyContent
+import com.music.bitchord.ui.components.uniqueKeys
 import com.music.bitchord.ui.components.PAGE_GUTTER
 import com.music.bitchord.ui.components.PullToRefresh
 import com.music.bitchord.ui.components.feedSkeleton
+import com.music.bitchord.ui.components.verticalShelfPassThrough
 import org.jetbrains.compose.resources.stringResource
 import com.music.bitchord.sharedui.resources.*
 import androidx.compose.foundation.shape.CircleShape
@@ -108,28 +112,62 @@ fun AppleHomeScreen(
                 )
             }
             is UiState.Success -> {
-                itemsIndexed(
-                    page.data,
-                    key = { index, shelf -> "apple:shelf:$index:${shelf.title}" },
-                ) { _, shelf ->
-                    when (shelf.layout) {
-                        "hero" -> AppleHeroCarousel(
-                            shelf = shelf,
-                            onItemClick = onItemClick,
-                            onItemLongPress = onItemLongPress,
-                        )
-                        "concert" -> AppleConcertShelf(
-                            shelf = shelf,
-                            onItemClick = onItemClick,
-                        )
-                        else -> AppleShelfCarousel(
-                            shelf = shelf,
-                            onItemClick = onItemClick,
-                            onItemLongPress = onItemLongPress,
-                        )
-                    }
+                page.data.forEachIndexed { index, shelf ->
+                    appleHomeShelf(
+                        index = index,
+                        shelf = shelf,
+                        onItemClick = onItemClick,
+                        onItemLongPress = onItemLongPress,
+                    )
                 }
             }
+        }
+    }
+}
+
+/** A vertical song shelf belongs to the page's outer list, not to one eagerly composed shelf item. */
+private fun LazyListScope.appleHomeShelf(
+    index: Int,
+    shelf: HomeShelf,
+    onItemClick: (ShelfItem, String) -> Unit,
+    onItemLongPress: ((ShelfItem) -> Unit)?,
+) {
+    val shelfKey = "apple:shelf:$index:${shelf.title}"
+    val songList = shelf.layout != "hero" && shelf.layout != "concert" &&
+        shelf.items.isNotEmpty() && shelf.items.all { it.videoId != null }
+    if (songList) {
+        item(key = shelfKey, contentType = LazyContent.HEADER) {
+            AppleShelfHeading(shelf = shelf, onShelfHeaderClick = null)
+        }
+        val keys = uniqueKeys(shelf.items) { it.videoId ?: it.title }
+        itemsIndexed(
+            items = shelf.items,
+            key = { itemIndex, _ -> "$shelfKey:song:${keys[itemIndex]}" },
+            contentType = { _, _ -> LazyContent.SONG_ROW },
+        ) { _, item ->
+            AppleSongRow(item = item, shelfTitle = shelf.title, onItemClick = onItemClick)
+        }
+        return
+    }
+    item(
+        key = shelfKey,
+        contentType = if (shelf.layout == "hero") LazyContent.HERO_SHELF else LazyContent.SHELF,
+    ) {
+        when (shelf.layout) {
+            "hero" -> AppleHeroCarousel(
+                shelf = shelf,
+                onItemClick = onItemClick,
+                onItemLongPress = onItemLongPress,
+            )
+            "concert" -> AppleConcertShelf(
+                shelf = shelf,
+                onItemClick = onItemClick,
+            )
+            else -> AppleShelfCarousel(
+                shelf = shelf,
+                onItemClick = onItemClick,
+                onItemLongPress = onItemLongPress,
+            )
         }
     }
 }
@@ -221,6 +259,83 @@ fun AppleBrowseScreen(
     }
 }
 
+@Composable
+private fun AppleShelfHeading(
+    shelf: HomeShelf,
+    onShelfHeaderClick: ((HomeShelf) -> Unit)?,
+) {
+    Text(
+        // Apple's headings carry a chevron, because a heading over a row
+        // is a way into more of it rather than a label — and it is the
+        // heading that is tapped, not just the arrow after it.
+        text = shelf.title + "  \u203A",
+        style = MaterialTheme.typography.titleLarge,
+        color = MaterialTheme.colorScheme.onBackground,
+        maxLines = 1,
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(enabled = onShelfHeaderClick != null) {
+                onShelfHeaderClick?.invoke(shelf)
+            }
+            .padding(
+                start = PAGE_GUTTER,
+                end = PAGE_GUTTER,
+                top = 18.dp,
+                bottom = 8.dp,
+            ),
+    )
+}
+
+/** One song in a vertical shelf, kept as an item of the page's own lazy list. */
+@Composable
+private fun AppleSongRow(
+    item: ShelfItem,
+    shelfTitle: String,
+    onItemClick: (ShelfItem, String) -> Unit,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onItemClick(item, shelfTitle) }
+            .padding(horizontal = PAGE_GUTTER, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier
+                .size(48.dp)
+                .clip(RoundedCornerShape(AppleTokens.CornerSmall))
+                .background(MaterialTheme.colorScheme.surfaceVariant),
+        ) {
+            if (item.thumbnailUrl != null) {
+                AsyncImage(
+                    model = item.thumbnailUrl,
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+        }
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = item.title,
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onBackground,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                text = item.subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
 /**
  * One group of Apple's, as its own row.
  *
@@ -236,78 +351,9 @@ private fun AppleShelfCarousel(
     onShelfHeaderClick: ((HomeShelf) -> Unit)? = null,
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
-        Text(
-            // Apple's headings carry a chevron, because a heading over a row
-            // is a way into more of it rather than a label — and it is the
-            // heading that is tapped, not just the arrow after it.
-            text = shelf.title + "  \u203A",
-            style = MaterialTheme.typography.titleLarge,
-            color = MaterialTheme.colorScheme.onBackground,
-            maxLines = 1,
-            overflow = TextOverflow.Ellipsis,
-            modifier = Modifier
-                .fillMaxWidth()
-                .clickable(enabled = onShelfHeaderClick != null) {
-                    onShelfHeaderClick?.invoke(shelf)
-                }
-                .padding(
-                    start = PAGE_GUTTER,
-                    end = PAGE_GUTTER,
-                    top = 18.dp,
-                    bottom = 8.dp,
-                ),
-        )
-        // A shelf of songs is a list, not a row of cards: Apple draws "Best
-        // New Songs" as tracks with a cover, a title and an artist, because
-        // songs are played one at a time and scanned vertically. A cover you
-        // swipe past says nothing about which song it is.
-        if (shelf.items.isNotEmpty() && shelf.items.all { it.videoId != null }) {
-            shelf.items.forEach { item ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { onItemClick(item, shelf.title) }
-                        .padding(horizontal = PAGE_GUTTER, vertical = 6.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Box(
-                        Modifier
-                            .size(48.dp)
-                            .clip(RoundedCornerShape(AppleTokens.CornerSmall))
-                            .background(MaterialTheme.colorScheme.surfaceVariant),
-                    ) {
-                        if (item.thumbnailUrl != null) {
-                            AsyncImage(
-                                model = item.thumbnailUrl,
-                                contentDescription = null,
-                                contentScale = ContentScale.Crop,
-                                modifier = Modifier.fillMaxSize(),
-                            )
-                        }
-                    }
-                    Spacer(Modifier.width(12.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(
-                            text = item.title,
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onBackground,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                        Text(
-                            text = item.subtitle,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                }
-            }
-            return@Column
-        }
+        AppleShelfHeading(shelf = shelf, onShelfHeaderClick = onShelfHeaderClick)
         LazyRow(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().verticalShelfPassThrough(),
             contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
             horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {
@@ -386,7 +432,7 @@ private fun AppleHeroCarousel(
             ),
         )
         LazyRow(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier.fillMaxWidth().verticalShelfPassThrough(),
             contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
             horizontalArrangement = Arrangement.spacedBy(14.dp),
         ) {

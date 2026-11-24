@@ -2,12 +2,21 @@ package com.music.bitchord.data.settings
 
 import com.music.bitchord.data.webdav.update
 import android.app.ActivityManager
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import android.database.ContentObserver
+import android.os.Handler
+import android.os.Looper
+import android.os.PowerManager
 import android.os.SystemClock
+import android.provider.Settings
 import android.content.SharedPreferences
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import androidx.core.content.ContextCompat
 import androidx.media3.common.Player
 import com.music.bitchord.BuildConfig
 import com.music.bitchord.auth.AuthStore
@@ -907,8 +916,18 @@ object AppSettings {
     /** Put the playing track's codec, bitrate and sample rate on the player. */
     val showNerdStats = MutableStateFlow(false)
 
-    /** Freezes the main player's mesh gradient instead of letting it drift/crossfade. */
+    /** Listener's saved motion choice. System constraints never overwrite it. */
+    val motionMode = MutableStateFlow(MotionMode.FULL)
+
+    /** Motion after Android reduced-motion and battery-saver policy is applied. */
+    val effectiveMotionMode = MutableStateFlow(MotionMode.FULL)
+
+    /** Legacy decorative-motion switch; true for both REDUCED and OFF. */
     val reduceAnimation = MutableStateFlow(false)
+
+    private var systemReducedMotion = false
+    private var batterySaver = false
+    private var motionWatchersInstalled = false
 
     /** Requests a sustained high-refresh UI. Off keeps Android's automatic policy. */
     val highPerformanceMode = MutableStateFlow(false)
@@ -1766,6 +1785,7 @@ object AppSettings {
         // not a choice.
         com.music.bitchord.playback.AutomixProfiles.init(context.filesDir)
         readAll()
+        watchMotionSystem(context)
         watchConnection(context)
         // The offline verdict, published to the one place every request in the
         // app goes through — see [com.music.bitchord.data.NetworkPolicy].
@@ -1933,7 +1953,14 @@ object AppSettings {
         shuffleEnabled.value = prefs.getBoolean(KEY_SHUFFLE_ENABLED, false)
         repeatMode.value = prefs.getInt(KEY_REPEAT_MODE, Player.REPEAT_MODE_OFF)
         showNerdStats.value = prefs.getBoolean(KEY_NERD_STATS, false)
-        reduceAnimation.value = prefs.getBoolean(KEY_REDUCE_ANIMATION, lowEndDevice)
+        val legacyReducedMotion = prefs.getBoolean(KEY_REDUCE_ANIMATION, lowEndDevice)
+        motionMode.value = runCatching {
+            MotionMode.valueOf(
+                prefs.getString(KEY_MOTION_MODE, null)
+                    ?: if (legacyReducedMotion) MotionMode.OFF.name else MotionMode.FULL.name,
+            )
+        }.getOrDefault(if (legacyReducedMotion) MotionMode.OFF else MotionMode.FULL)
+        reduceAnimation.value = legacyReducedMotion
         highPerformanceMode.value = prefs.getBoolean(KEY_HIGH_PERFORMANCE_MODE, false)
         performanceRefreshRate.value = normalizePerformanceRefreshRate(
             prefs.getInt(KEY_PERFORMANCE_REFRESH_RATE, DEFAULT_PERFORMANCE_REFRESH_RATE),
@@ -1966,9 +1993,10 @@ object AppSettings {
             .coerceIn(MIN_LYRICS_OFFSET_MS, MAX_LYRICS_OFFSET_MS)
         translationLanguage.value = prefs.getString(KEY_TRANSLATION_LANGUAGE, "").orEmpty()
         if (highPerformanceMode.value) {
-            reduceAnimation.value = false
+            motionMode.value = MotionMode.FULL
             reduceDynamicBlur.value = false
         }
+        updateEffectiveMotion()
         animatedCanvas.value = prefs.getBoolean(KEY_ANIMATED_CANVAS, !lowEndDevice)
         canvasOverCellular.value = prefs.getBoolean(KEY_CANVAS_OVER_CELLULAR, false)
         spotifyCanvasAutoHide.value = prefs.getBoolean(KEY_SPOTIFY_CANVAS_AUTO_HIDE, true)
@@ -2600,12 +2628,82 @@ object AppSettings {
         prefs.edit().putInt(KEY_CLASSIPOD_WHEEL_STEPS, classipodWheelSteps.value).apply()
     }
 
+    fun setMotionMode(value: MotionMode) {
+        motionMode.value = value
+        if (value != MotionMode.FULL) highPerformanceMode.value = false
+        prefs.edit()
+            .putString(KEY_MOTION_MODE, value.name)
+            // Keep the old preference meaningful for backups and older builds.
+            .putBoolean(KEY_REDUCE_ANIMATION, value == MotionMode.OFF)
+            .putBoolean(KEY_HIGH_PERFORMANCE_MODE, value == MotionMode.FULL && highPerformanceMode.value)
+            .apply()
+        updateEffectiveMotion()
+    }
+
     fun setReduceAnimation(value: Boolean) {
-        reduceAnimation.value = value
-        if (value) highPerformanceMode.value = false
-        val editor = prefs.edit().putBoolean(KEY_REDUCE_ANIMATION, value)
-        if (value) editor.putBoolean(KEY_HIGH_PERFORMANCE_MODE, false)
-        editor.apply()
+        setMotionMode(if (value) MotionMode.OFF else MotionMode.FULL)
+    }
+
+    private fun updateEffectiveMotion() {
+        val effective = resolveMotionMode(
+            requested = motionMode.value,
+            systemReducedMotion = systemReducedMotion,
+            batterySaver = batterySaver,
+        )
+        effectiveMotionMode.value = effective
+        reduceAnimation.value = effective != MotionMode.FULL
+    }
+
+    /** Event-driven platform policy; both registrations live only for this process. */
+    private fun watchMotionSystem(context: Context) {
+        if (motionWatchersInstalled) {
+            updateEffectiveMotion()
+            return
+        }
+        motionWatchersInstalled = true
+        val app = context.applicationContext
+        systemReducedMotion = runCatching {
+            Settings.Global.getFloat(
+                app.contentResolver,
+                Settings.Global.ANIMATOR_DURATION_SCALE,
+                1f,
+            ) == 0f
+        }.getOrDefault(false)
+        batterySaver = runCatching {
+            app.getSystemService(PowerManager::class.java)?.isPowerSaveMode == true
+        }.getOrDefault(false)
+        updateEffectiveMotion()
+
+        val reducedMotionObserver = object : ContentObserver(Handler(Looper.getMainLooper())) {
+            override fun onChange(selfChange: Boolean) {
+                systemReducedMotion = runCatching {
+                    Settings.Global.getFloat(
+                        app.contentResolver,
+                        Settings.Global.ANIMATOR_DURATION_SCALE,
+                        1f,
+                    ) == 0f
+                }.getOrDefault(false)
+                updateEffectiveMotion()
+            }
+        }
+        app.contentResolver.registerContentObserver(
+            Settings.Global.getUriFor(Settings.Global.ANIMATOR_DURATION_SCALE),
+            false,
+            reducedMotionObserver,
+        )
+        ContextCompat.registerReceiver(
+            app,
+            object : BroadcastReceiver() {
+                override fun onReceive(context: Context?, intent: Intent?) {
+                    batterySaver = runCatching {
+                        app.getSystemService(PowerManager::class.java)?.isPowerSaveMode == true
+                    }.getOrDefault(false)
+                    updateEffectiveMotion()
+                }
+            },
+            IntentFilter(PowerManager.ACTION_POWER_SAVE_MODE_CHANGED),
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
     }
 
     fun setStopOnTaskRemoved(value: Boolean) {
@@ -2680,15 +2778,17 @@ object AppSettings {
     fun setHighPerformanceMode(value: Boolean) {
         highPerformanceMode.value = value
         if (value) {
-            reduceAnimation.value = false
+            motionMode.value = MotionMode.FULL
             reduceDynamicBlur.value = false
         }
         val editor = prefs.edit().putBoolean(KEY_HIGH_PERFORMANCE_MODE, value)
         if (value) {
+            editor.putString(KEY_MOTION_MODE, MotionMode.FULL.name)
             editor.putBoolean(KEY_REDUCE_ANIMATION, false)
             editor.putBoolean(KEY_REDUCE_BLUR, false)
         }
         editor.apply()
+        updateEffectiveMotion()
     }
 
     fun setPerformanceRefreshRate(value: Int) {
@@ -3584,6 +3684,7 @@ object AppSettings {
     /** The widest queue: past this the phone is the limit, not the setting. */
     const val MAX_CONCURRENT_DOWNLOADS = 6
     private const val KEY_REDUCE_ANIMATION = "reduce_animation"
+    private const val KEY_MOTION_MODE = "motion_mode"
     private const val KEY_HIGH_PERFORMANCE_MODE = "high_performance_mode"
     private const val KEY_PERFORMANCE_REFRESH_RATE = "performance_refresh_rate"
     private const val KEY_STOP_ON_TASK_REMOVED = "stop_on_task_removed"

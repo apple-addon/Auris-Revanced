@@ -3,7 +3,6 @@ package com.music.bitchord.ui.theme
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.AnimationSpec
 import androidx.compose.animation.core.snap
-import androidx.compose.animation.core.tween
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.Immutable
@@ -21,7 +20,6 @@ import com.music.bitchord.ui.graphics.Swatch
 import com.music.bitchord.ui.graphics.forPixelAccess
 import com.music.bitchord.ui.graphics.paletteSwatches
 import com.music.bitchord.ui.graphics.toImageBitmap
-import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.SingletonImageLoader
 import coil3.request.ImageRequest
 import coil3.request.SuccessResult
@@ -31,7 +29,11 @@ import com.music.bitchord.ui.player.DefaultNowPlayingPalette
 import com.music.bitchord.ui.player.NowPlayingPalette
 import com.music.bitchord.ui.player.PlayerPlatform
 import com.music.bitchord.ui.player.computeNowPlayingPalette
+import com.music.bitchord.ui.motion.AppMotion
+import com.music.bitchord.ui.motion.rememberMotionMode
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlin.math.sqrt
 
@@ -106,7 +108,7 @@ fun rememberArtworkPalette(
     keyColors: ArtworkKeyColors? = null,
 ): ArtworkPalette {
     val scheme = MaterialTheme.colorScheme
-    val reduceAnimation by PlayerPlatform.host.settings.reduceAnimation.collectAsStateWithLifecycle()
+    val motionMode = rememberMotionMode()
     // Always asked, so the composable call is unconditional; handed nothing to
     // read when the colours are already in hand.
     val decoded = rememberArtworkSeed(if (keyColors == null) imageUrl else null, artPx)
@@ -126,10 +128,10 @@ fun rememberArtworkPalette(
         divider = scheme.outline,
     )
 
-    val spec: AnimationSpec<Color> = if (reduceAnimation || knownUpFront) {
+    val spec: AnimationSpec<Color> = if (knownUpFront) {
         snap()
     } else {
-        tween(TINT_FADE_MS)
+        AppMotion.tween(motionMode, fullMs = TINT_FADE_MS)
     }
     return ArtworkPalette(
         background = animateColorAsState(target.background, spec, label = "tintBackground").value,
@@ -162,16 +164,28 @@ private fun rememberArtworkSeed(imageUrl: String?, artPx: Int): Seed? {
 
     LaunchedEffect(imageUrl, artPx) {
         if (imageUrl == null || seed != null) return@LaunchedEffect
-        val request = ImageRequest.Builder(context)
-            .data(imageUrl.artworkAt(artPx))
-            .size(PALETTE_PX)
-            .forPixelAccess()
-            .build()
-        val result = SingletonImageLoader.get(context).execute(request)
-        val bitmap = (result as? SuccessResult)?.image?.toImageBitmap() ?: return@LaunchedEffect
-        val found = withContext(Dispatchers.Default) { seedOf(bitmap) } ?: return@LaunchedEffect
-        seedCache[imageUrl] = found
-        seed = found
+        val lock = seedLocks.getOrPut(imageUrl) { Mutex() }
+        try {
+            lock.withLock {
+                // A concurrent caller may have populated the cache while we waited.
+                seedCache[imageUrl]?.let { cached ->
+                    seed = cached
+                    return@withLock
+                }
+                val request = ImageRequest.Builder(context)
+                    .data(imageUrl.artworkAt(artPx))
+                    .size(PALETTE_PX)
+                    .forPixelAccess()
+                    .build()
+                val result = SingletonImageLoader.get(context).execute(request)
+                val bitmap = (result as? SuccessResult)?.image?.toImageBitmap() ?: return@withLock
+                val found = withContext(Dispatchers.Default) { seedOf(bitmap) } ?: return@withLock
+                seedCache[imageUrl] = found
+                seed = found
+            }
+        } finally {
+            seedLocks.remove(imageUrl, lock)
+        }
     }
     return seed
 }
@@ -190,6 +204,9 @@ private val seedCache = object : LinkedHashMap<String, Seed>(0, 0.75f, true) {
 
 /** Deep enough to cover a session's browsing without holding a screenful of colours. */
 private const val SEED_CACHE_ENTRIES = 128
+
+/** In-flight cold reads, keyed like [seedCache]; entries are removed on completion. */
+private val seedLocks = mutableMapOf<String, Mutex>()
 
 private const val PALETTE_PX = 128
 

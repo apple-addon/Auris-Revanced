@@ -151,6 +151,10 @@ class PlayerDock {
     private var originW = -1
     private var originH = -1
 
+    /** One transmission's pill anchor; page scroll/fold may not stretch the panel. */
+    private var lockedPill: Rect? = null
+    private var lockedTravel: Float? = null
+
     /** Where the panel's window starts on screen. */
     private var windowOrigin: Offset = Offset.Zero
 
@@ -174,8 +178,7 @@ class PlayerDock {
         }
     }
 
-    /** The pill in the panel window's own pixels, or null with no pill on screen. */
-    fun miniPillInWindow(): Rect? {
+    private fun currentMiniPillInWindow(): Rect? {
         val c = miniPill?.takeIf { it.isAttached } ?: return null
         val now = System.nanoTime()
         pillCache?.let { if (now - pillCacheNanos < PILL_CACHE_NANOS) return it }
@@ -189,11 +192,29 @@ class PlayerDock {
         }
     }
 
+    /** The pill in the panel window's own pixels, or null with no pill on screen. */
+    fun miniPillInWindow(): Rect? = lockedPill ?: currentMiniPillInWindow()
+
+    /** Captures the pill once, before an open/close begins. */
+    fun beginPanelTravel() {
+        if (lockedPill != null || lockedTravel != null) return
+        val pill = currentMiniPillInWindow()
+        lockedPill = pill
+        lockedTravel = pill?.top?.takeIf { it > 1f } ?: sheetTravel.takeIf { it > 0f }
+    }
+
+    /** The panel is gone; the next open captures the pill where it then is. */
+    fun endPanelTravel() {
+        lockedPill = null
+        lockedTravel = null
+    }
+
     /**
      * How far the player travels between fully open and docked on the pill:
      * the pill's top edge. Falls back to the whole window with no pill.
      */
     fun travel(): Float {
+        lockedTravel?.let { return it }
         val top = miniPillInWindow()?.top
         return if (top != null && top > 1f) top else sheetTravel
     }

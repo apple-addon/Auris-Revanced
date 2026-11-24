@@ -85,6 +85,7 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
         override val preferUsbDac get() = AppSettings.preferUsbDac
         override val prioritizeSpotifyCanvas get() = AppSettings.prioritizeSpotifyCanvas
         override val spotifyCanvasEnabled get() = AppSettings.spotifyCanvasEnabled
+        override val motionMode get() = AppSettings.effectiveMotionMode
         override val reduceAnimation get() = AppSettings.reduceAnimation
         override val reduceDynamicBlur get() = AppSettings.reduceDynamicBlur
         override val showNerdStats get() = AppSettings.showNerdStats

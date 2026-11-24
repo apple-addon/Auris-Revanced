@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -52,6 +53,7 @@ import com.music.bitchord.ui.components.PAGE_GUTTER
 import com.music.bitchord.ui.components.PullToRefresh
 import com.music.bitchord.ui.components.ShelfRow
 import com.music.bitchord.ui.components.ShimmerBox
+import com.music.bitchord.ui.components.uniqueKeys
 import com.music.bitchord.ui.icons.BitChordIcons
 import com.music.bitchord.ui.player.CanvasArtworkPlayer
 import com.music.bitchord.ui.player.CanvasContentMode
@@ -93,75 +95,91 @@ fun RadioScreen(
         state = pullState,
         modifier = modifier,
     ) {
-        LazyColumn(
-            state = listState,
-            contentPadding = contentPadding,
-            modifier = Modifier.fillMaxSize(),
-        ) {
-            item(key = "title") {
-                Text(
-                    text = stringResource(Res.string.radio),
-                    style = MaterialTheme.typography.displayLarge,
-                    color = MaterialTheme.colorScheme.onBackground,
-                    modifier = Modifier.padding(
-                        start = PAGE_GUTTER,
-                        end = PAGE_GUTTER,
-                        top = 8.dp,
-                        bottom = 14.dp,
-                    ),
-                )
-            }
-            item(key = "featured") {
-                RadioFeatureCard(
-                    item = flowItem,
-                    onClick = onFlowClick,
-                )
-            }
-            item(key = "start_station") {
-                StartStationRow(onClick = onStartStation)
-            }
-            item(key = "genres") {
-                GenresRow(onClick = onGenresClick)
-            }
-            if (seeds.isNotEmpty()) {
-                item(key = "seeds_header") {
-                    SectionHeader(stringResource(Res.string.radio_recent_seeds))
-                }
-                item(key = "seeds") {
-                    ShelfRow(
-                        contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
-                        horizontalArrangement = Arrangement.spacedBy(14.dp),
-                    ) {
-                        items(seeds) { item ->
-                            ShelfCard(
-                                item = item,
-                                onClick = { onSeedClick(item) },
-                            )
-                        }
-                    }
-                }
-                item(key = "seeds_gap") { Spacer(Modifier.height(18.dp)) }
-            }
-            when (state) {
-                UiState.Loading -> item(key = "skeleton") {
-                    RadioSkeleton()
-                }
-                is UiState.Error -> item(key = "error") {
-                    MessageState(
-                        state.message,
-                        actionLabel = stringResource(Res.string.retry),
-                        onAction = onRetry,
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            val columns = (maxWidth / 118.dp).toInt().coerceIn(3, 5)
+            LazyColumn(
+                state = listState,
+                contentPadding = contentPadding,
+                modifier = Modifier.fillMaxSize(),
+            ) {
+                item(key = "title") {
+                    Text(
+                        text = stringResource(Res.string.radio),
+                        style = MaterialTheme.typography.displayLarge,
+                        color = MaterialTheme.colorScheme.onBackground,
+                        modifier = Modifier.padding(
+                            start = PAGE_GUTTER,
+                            end = PAGE_GUTTER,
+                            top = 8.dp,
+                            bottom = 14.dp,
+                        ),
                     )
                 }
-                is UiState.Success -> {
-                    val genres = state.data.flatMap(MoodGenreSection::items)
-                        .distinctBy { it.browseId to it.params }
-                    if (genres.isNotEmpty()) {
-                        item(key = "stations_header") {
-                            SectionHeader(stringResource(Res.string.radio_stations))
+                item(key = "featured") {
+                    RadioFeatureCard(
+                        item = flowItem,
+                        onClick = onFlowClick,
+                    )
+                }
+                item(key = "start_station") {
+                    StartStationRow(onClick = onStartStation)
+                }
+                item(key = "genres") {
+                    GenresRow(onClick = onGenresClick)
+                }
+                if (seeds.isNotEmpty()) {
+                    item(key = "seeds_header") {
+                        SectionHeader(stringResource(Res.string.radio_recent_seeds))
+                    }
+                    item(key = "seeds") {
+                        ShelfRow(
+                            contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
+                            horizontalArrangement = Arrangement.spacedBy(14.dp),
+                        ) {
+                            items(seeds) { item ->
+                                ShelfCard(
+                                    item = item,
+                                    onClick = { onSeedClick(item) },
+                                )
+                            }
                         }
-                        item(key = "stations") {
-                            StationGrid(genres = genres, onStationClick = onStationClick)
+                    }
+                    item(key = "seeds_gap") { Spacer(Modifier.height(18.dp)) }
+                }
+                when (state) {
+                    UiState.Loading -> item(key = "skeleton") {
+                        RadioSkeleton()
+                    }
+                    is UiState.Error -> item(key = "error") {
+                        MessageState(
+                            state.message,
+                            actionLabel = stringResource(Res.string.retry),
+                            onAction = onRetry,
+                        )
+                    }
+                    is UiState.Success -> {
+                        val rows = state.data.flatMap(MoodGenreSection::items)
+                            .distinctBy { it.browseId to it.params }
+                            .chunked(columns)
+                        if (rows.isNotEmpty()) {
+                            val keys = uniqueKeys(rows) { row ->
+                                row.first().let { "${it.browseId}|${it.params}" }
+                            }
+                            item(key = "stations_header") {
+                                SectionHeader(stringResource(Res.string.radio_stations))
+                            }
+                            itemsIndexed(
+                                items = rows,
+                                key = { index, _ -> "station-row:${keys[index]}" },
+                                contentType = { _, _ -> "station-row" },
+                            ) { index, row ->
+                                StationRow(
+                                    row = row,
+                                    columns = columns,
+                                    onStationClick = onStationClick,
+                                    showBottomSpacing = index < rows.lastIndex,
+                                )
+                            }
                         }
                     }
                 }
@@ -378,31 +396,30 @@ private fun StartStationRow(onClick: () -> Unit) {
     }
 }
 
-/** Apple's Radio wall: square station tiles, three to a phone row. */
+/** One row of Apple's Radio wall: square station tiles, three to a phone row. */
 @Composable
-private fun StationGrid(genres: List<MoodGenre>, onStationClick: (MoodGenre) -> Unit) {
-    BoxWithConstraints(Modifier.fillMaxWidth()) {
-        val columns = (maxWidth / 118.dp).toInt().coerceIn(3, 5)
-        Column(
-            modifier = Modifier.padding(horizontal = PAGE_GUTTER),
-            verticalArrangement = Arrangement.spacedBy(STATION_SPACING),
-        ) {
-            genres.chunked(columns).forEach { row ->
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(STATION_SPACING),
-                ) {
-                    row.forEach { genre ->
-                        StationTile(
-                            genre = genre,
-                            onClick = { onStationClick(genre) },
-                            modifier = Modifier.weight(1f),
-                        )
-                    }
-                    repeat(columns - row.size) {
-                        Spacer(Modifier.weight(1f))
-                    }
-                }
-            }
+private fun StationRow(
+    row: List<MoodGenre>,
+    columns: Int,
+    onStationClick: (MoodGenre) -> Unit,
+    showBottomSpacing: Boolean,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = PAGE_GUTTER)
+            .padding(bottom = if (showBottomSpacing) STATION_SPACING else 0.dp),
+        horizontalArrangement = Arrangement.spacedBy(STATION_SPACING),
+    ) {
+        row.forEach { genre ->
+            StationTile(
+                genre = genre,
+                onClick = { onStationClick(genre) },
+                modifier = Modifier.weight(1f),
+            )
+        }
+        repeat(columns - row.size) {
+            Spacer(Modifier.weight(1f))
         }
     }
 }

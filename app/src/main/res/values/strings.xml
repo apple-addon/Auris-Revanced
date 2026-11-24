@@ -435,6 +435,12 @@
     <string name="theme">Theme</string>
     <string name="reduce_animation">Disable animations</string>
     <string name="reduce_animation_subtitle">Stops every animation in the app: pages, the player, the bars and the artwork</string>
+    <string name="animations">Animations</string>
+    <string name="motion_full">Full</string>
+    <string name="motion_reduced">Reduced</string>
+    <string name="motion_off">Off</string>
+    <string name="motion_mode_subtitle">Full, reduced, or off. Android motion and battery settings are respected.</string>
+    <string name="motion_system_override">System reduced motion or Battery Saver is currently limiting motion.</string>
     <string name="reduce_dynamic_blur">Reduce dynamic blur</string>
     <string name="reduce_dynamic_blur_subtitle">Swaps frosted glass for solid fills across the app</string>
     <string name="liquid_glass">Liquid Glass</string>

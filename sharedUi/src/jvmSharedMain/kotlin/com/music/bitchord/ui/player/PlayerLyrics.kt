@@ -132,6 +132,7 @@ import com.music.bitchord.ui.haptics.Haptics
 import com.music.bitchord.ui.haptics.rememberHaptics
 import com.music.bitchord.ui.icons.BitChordIcons
 import com.music.bitchord.ui.rememberIsForeground
+import com.music.bitchord.ui.motion.rememberDecorativeMotionEnabled
 import java.util.Locale
 import kotlin.math.PI
 import kotlin.math.abs
@@ -357,10 +358,6 @@ private val GAP_DOT_GAP = 5.dp
 private const val GAP_DOT_REST = 0.25f
 private const val GAP_REST_SCALE = 0.76f
 
-/** How long the panel takes to settle on a new line, and how far ahead it starts. */
-private const val SCROLL_LEAD_MIN_MS = 350L
-private const val SCROLL_LEAD_MAX_MS = 500L
-
 /**
  * The curve every handover runs on: away quickly, in slowly and softly.
  *
@@ -392,31 +389,6 @@ private const val STAGGER_FRACTION = 0.06f
 private class ScrollRun(val id: Int, val delta: Float, val durationMs: Int) {
     /** The last row to arrive does so this long after the panel sets off. */
     val spanMs: Float get() = durationMs * (1f + STAGGER_FRACTION * STAGGER_STEPS)
-}
-
-/**
- * How long before a line lands the panel starts moving to it — and how long
- * the move then takes, which is the same number.
- *
- * It is the run-up: the silence between the last word of the line being sung
- * and the first of the next. Bounded either side, because that silence is a
- * held breath in one song and half a verse in another, and neither the snap
- * nor the drift is what you want to be reading against.
- */
-private fun scrollLead(lines: List<LyricLine>, positionMs: Long): Long {
-    val current = lines.indexOfLast { it.timeMs <= positionMs }
-    // Before the first line's own timestamp there is no current line to
-    // measure a run-up from. [indexOfLast] answers -1 there, and the guard
-    // below does not catch it: `current + 1` is 0, which is a perfectly real
-    // line, so the elvis never fires and `lines[current]` indexes at -1.
-    //
-    // Only reachable while the playhead is genuinely before the first lyric —
-    // a track paused at 0:00 whose words start a few seconds in, which is
-    // every track that opens on an intro.
-    if (current < 0) return SCROLL_LEAD_MIN_MS
-    val next = lines.getOrNull(current + 1) ?: return SCROLL_LEAD_MIN_MS
-    val gap = next.timeMs - lines[current].endMs
-    return gap.coerceIn(SCROLL_LEAD_MIN_MS, SCROLL_LEAD_MAX_MS)
 }
 
 /**
@@ -1518,8 +1490,8 @@ private fun LyricsSkeleton(
     // Under "reduce animation" the bars are still there, with one fixed
     // highlight instead of a full-width band sweeping the panel on every frame
     // for as long as the lookup takes.
-    val reduceAnimation by PlayerSettings.reduceAnimation.collectAsStateWithLifecycle()
-    val sweep: State<Float> = if (reduceAnimation || !animated) {
+    val decorativeMotion = rememberDecorativeMotionEnabled()
+    val sweep: State<Float> = if (!decorativeMotion || !animated) {
         remember { mutableStateOf(0.5f) }
     } else {
         rememberInfiniteTransition(label = "lyricsSkeleton").animateFloat(
@@ -1666,6 +1638,7 @@ internal fun LyricsPanel(
     modifier: Modifier = Modifier,
 ) {
     val panelPlaying = isPlaying && active
+    val isSynced = remember(lines) { lines.any { it.timeMs > 0L } }
     // The romanize / sing / translate discs float over the foot of the panel
     // while its controls are shown. Lines fade out above them instead of
     // running underneath, on the discs' own fade (see NowPlayingPanels). Read
@@ -1676,23 +1649,44 @@ internal fun LyricsPanel(
         animationSpec = tween(if (discsShown) 220 else 160),
         label = "lyricsDiscClearance",
     )
-    val clock = rememberLyricClock(trackKey, playhead, panelPlaying)
     val subReveal = rememberSubLyricsReveal(subLines, trackKey)
+    val shownSubLines = subReveal.lines
+    // Plain or empty lyrics have no clock-driven picture. Word-timed originals,
+    // backing vocals and displayed sub-lyrics are the exception: their sweep,
+    // syllables, rise and bloom must keep receiving every frame even when the
+    // sheet's line timestamps themselves do not make [isSynced] true. Include
+    // the outgoing sub-lyrics held by subReveal throughout their collapse.
+    val hasWordAnimation = remember(lines, shownSubLines) {
+        fun List<LyricLine>.hasSweptVoice() = any {
+            it.isWordSynced || it.background?.isWordSynced == true
+        }
+        if (lines.isEmpty()) {
+            false
+        } else {
+            lines.hasSweptVoice() || shownSubLines?.hasSweptVoice() == true
+        }
+    }
+    val clock = rememberLyricClock(
+        trackKey,
+        playhead,
+        panelPlaying && (isSynced || hasWordAnimation),
+    )
 
-    val isSynced = remember(lines) { lines.any { it.timeMs > 0L } }
     // Only a song that actually names a second voice is laid out as one. A
     // single-voice song has every line on the left already, so splitting the
     // panel into lanes for it would just be a narrower panel.
     val duet = remember(lines) { lines.any { it.alignment == LyricAlignment.End } }
 
-    val activeRows by remember(lines, isSynced) {
+    val lyricsFocus = remember(lines) { LyricFocus(lines) }
+    val panelFocus by remember(lyricsFocus, isSynced) {
         derivedStateOf {
-            if (!isSynced) emptyList() else activeLyricRows(lines, clock.longValue)
+            if (isSynced) lyricsFocus.panelFocus(clock.longValue) else LyricPanelFocus.None
         }
     }
+    val activeRows = panelFocus.activeRows
     // The uppermost unfinished vocal owns the scroll anchor until its end,
     // even as later rows begin their own independent highlight animations.
-    val scrollLine = activeRows.firstOrNull() ?: -1
+    val scrollLine = panelFocus.scrollLine
     // Where the panel is heading, which is a beat ahead of where the singing
     // is. Movement that starts on the downbeat arrives after it — the line is
     // already being sung by the time it settles, and you read it late. Started
@@ -1700,20 +1694,10 @@ internal fun LyricsPanel(
     //
     // Kept apart from [scrollLine] on purpose: this leads, and the sweep must
     // not. Everything lit by the clock still goes through the real one.
-    val leadLine by remember(lines, isSynced) {
-        derivedStateOf {
-            if (!isSynced) {
-                -1
-            } else {
-                val now = clock.longValue
-                activeLyricRows(lines, now + scrollLead(lines, now)).firstOrNull() ?: -1
-            }
-        }
-    }
     // What the stack arranges itself around. The outgoing line starts dimming
     // as the panel leaves it rather than when its last word ends, so the dim,
     // the blur and the movement are one gesture.
-    val focusLine = if (leadLine >= 0) leadLine else scrollLine
+    val focusLine = panelFocus.focusLine
     val listState = rememberLazyListState()
     LaunchedEffect(listState) {
         snapshotFlow { listState.isScrollInProgress }.collect(onScrollingChange)
@@ -1840,7 +1824,7 @@ internal fun LyricsPanel(
                 // given the run-up's own duration and curve instead of the
                 // list's default spring.
                 visible != null -> {
-                    val span = scrollLead(lines, clock.longValue).toInt()
+                    val span = lyricsFocus.scrollLead(clock.longValue).toInt()
                     run = ScrollRun(run.id + 1, visible.offset.toFloat(), span)
                     // The same curve the rows catch up on. Two different
                     // curves and a row with no delay at all still trails the
@@ -2679,8 +2663,9 @@ private fun CurrentLyricLine(
 
     val clock = rememberLyricClock(trackKey, playhead, isPlaying)
 
-    val index by remember(lines) {
-        derivedStateOf { lines.indexOfLast { it.timeMs <= clock.longValue } }
+    val lyricsFocus = remember(lines) { LyricFocus(lines) }
+    val index by remember(lyricsFocus) {
+        derivedStateOf { lyricsFocus.currentLine(clock.longValue) }
     }
     val current = lines.getOrNull(index)
     // Before the first line, and through instrumental breaks, show the note.

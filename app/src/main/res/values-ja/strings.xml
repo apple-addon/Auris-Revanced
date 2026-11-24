@@ -1643,4 +1643,10 @@
         <item quantity="one">%d track is not in Apple Music and was left out</item>
         <item quantity="other">%d tracks are not in Apple Music and were left out</item>
     </plurals>
+    <string name="animations">アニメーション</string>
+    <string name="motion_full">フル</string>
+    <string name="motion_reduced">縮小</string>
+    <string name="motion_off">オフ</string>
+    <string name="motion_mode_subtitle">フル、縮小、オフ。Androidのモーションとバッテリー設定を尊重します。</string>
+    <string name="motion_system_override">システムの視覚効果削減またはバッテリーセーバーにより、モーションが制限されています。</string>
 </resources>

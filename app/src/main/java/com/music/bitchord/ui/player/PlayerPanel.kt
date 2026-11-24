@@ -73,6 +73,7 @@ import com.music.bitchord.ui.components.ExplicitSongTitle
 import com.music.bitchord.ui.components.GLASS_EDGE_COLOR
 import com.music.bitchord.ui.components.GLASS_EDGE_WIDTH
 import com.music.bitchord.ui.components.MiniPlayerNextGlyph
+import com.music.bitchord.ui.components.MiniPlayPauseGlyph
 import com.music.bitchord.ui.components.glassContentColor
 import com.music.bitchord.ui.components.liquidGlass
 import com.music.bitchord.ui.components.MiniArt
@@ -427,9 +428,8 @@ private fun PanelMiniRow(
                     },
                     modifier = Modifier.size(glyphSlot),
                 ) {
-                    Icon(
-                        imageVector = if (isPlaying) Icons.Rounded.Pause else Icons.Rounded.PlayArrow,
-                        contentDescription = stringResource(if (isPlaying) R.string.pause else R.string.play),
+                    MiniPlayPauseGlyph(
+                        isPlaying = isPlaying,
                         tint = contentColor,
                         modifier = Modifier.size(glyphSize),
                     )

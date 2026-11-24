@@ -40,6 +40,7 @@ import com.music.bitchord.ui.components.LazyContent
 import com.music.bitchord.ui.components.lazyKey
 import com.music.bitchord.ui.components.rememberShelfKeys
 import com.music.bitchord.ui.components.uniqueKeys
+import com.music.bitchord.ui.components.verticalShelfPassThrough
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -111,6 +112,9 @@ import com.music.bitchord.ui.player.MeshGradientBackground
 import com.music.bitchord.ui.player.MeshPalette
 import com.music.bitchord.ui.player.PlayerSettings
 import com.music.bitchord.ui.player.rememberFlowVideo
+import com.music.bitchord.ui.motion.AppMotion
+import com.music.bitchord.ui.motion.rememberMotionMode
+import com.music.bitchord.data.settings.MotionMode
 
 /** How far the Listen now heading and feed sit above the shared top inset. */
 private val HOME_TITLE_LIFT = 28.dp
@@ -228,6 +232,7 @@ fun HomeScreen(
     leadingCardsAsTiles: Boolean = false,
 ) {
     val recentsViewType by AppUi.host.homeRecentsViewType.collectAsStateWithLifecycle()
+    val motionMode = rememberMotionMode()
 
     PullToRefresh(
         refreshing = refreshing,
@@ -353,6 +358,7 @@ fun HomeScreen(
                                 },
                             )
                         },
+                        motionMode = motionMode,
                     )
                     if (loadingMore) feedMoreSkeleton()
                 }
@@ -407,6 +413,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexedShelves(
     firstIsHero: Boolean = true,
     recentsViewType: LibraryViewType,
     onRecentsViewTypeToggle: () -> Unit,
+    motionMode: MotionMode,
 ) {
     // Built once rather than per row: Quick Picks is pinned to the top, so at
     // most one shelf ever asks for it.
@@ -494,6 +501,16 @@ private fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexedShelves(
         item(key = if (seen == 0) base else "$base#$seen", contentType = kind) {
             val openItem: (ShelfItem) -> Unit = { item -> onItemClick(item, shelf.title) }
             val quickPicks = isQuickPicksShelf(shelf.title)
+            val itemModifier = if (motionMode == MotionMode.OFF) {
+                Modifier
+            } else {
+                Modifier.animateItem(
+                    fadeInSpec = null,
+                    fadeOutSpec = null,
+                    placementSpec = AppMotion.tween(motionMode),
+                )
+            }
+            Box(itemModifier) {
             if (quickPicks) {
                 // The Flow tile leads this row, so the two share one horizontal
                 // scroll instead of fighting for the top of the page.
@@ -536,6 +553,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.itemsIndexedShelves(
                     isPlaying = isPlaying,
                     onHeaderNavigate = { onShelfHeaderClick?.invoke(shelf) },
                 )
+            }
             }
         }
     }
@@ -818,6 +836,7 @@ private fun HomeChipRow(
         modifier = Modifier
             .fillMaxWidth()
             .horizontalScroll(rememberScrollState())
+            .verticalShelfPassThrough()
             .padding(horizontal = PAGE_GUTTER, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp),

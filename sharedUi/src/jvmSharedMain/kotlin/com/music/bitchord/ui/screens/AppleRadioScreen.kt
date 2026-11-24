@@ -42,6 +42,7 @@ import com.music.bitchord.ui.components.AppleTokens
 import com.music.bitchord.ui.components.PAGE_GUTTER
 import com.music.bitchord.ui.components.PullToRefresh
 import com.music.bitchord.ui.components.feedSkeleton
+import com.music.bitchord.ui.components.verticalShelfPassThrough
 import org.jetbrains.compose.resources.stringResource
 import com.music.bitchord.sharedui.resources.*
 
@@ -152,7 +153,7 @@ private fun AppleRadioCarousel(
     onRowClick: (AppleRadioRow) -> Unit,
 ) {
     LazyRow(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().verticalShelfPassThrough(),
         contentPadding = PaddingValues(horizontal = PAGE_GUTTER),
         horizontalArrangement = Arrangement.spacedBy(14.dp),
     ) {

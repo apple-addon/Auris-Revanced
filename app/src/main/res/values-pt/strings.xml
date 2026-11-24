@@ -1670,4 +1670,10 @@
         <item quantity="one">%d track is not in Apple Music and was left out</item>
         <item quantity="other">%d tracks are not in Apple Music and were left out</item>
     </plurals>
+    <string name="animations">Animações</string>
+    <string name="motion_full">Completas</string>
+    <string name="motion_reduced">Reduzidas</string>
+    <string name="motion_off">Desligadas</string>
+    <string name="motion_mode_subtitle">Completas, reduzidas ou desligadas. As definições de movimento e bateria do Android são respeitadas.</string>
+    <string name="motion_system_override">O movimento reduzido do sistema ou a poupança de bateria está a limitar as animações.</string>
 </resources>
