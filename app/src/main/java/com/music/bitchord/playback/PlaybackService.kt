@@ -99,6 +99,9 @@ import com.music.bitchord.playback.audio.LocalBitrateReading
 import com.music.bitchord.playback.audio.MeasuredBitrateMeter
 import com.music.bitchord.playback.usb.ExclusiveUsbOutput
 import com.music.bitchord.playback.usb.UsbDacMonitor
+import com.music.bitchord.playback.reference.AurisAudioOutputProvider
+import com.music.bitchord.playback.reference.ReferenceEngineLoader
+import com.music.bitchord.data.settings.ReferenceEngineMode
 import com.music.bitchord.playback.cast.CastController
 import com.music.bitchord.playback.cast.CastPlayback
 import com.music.bitchord.playback.cast.CastSink
@@ -7885,6 +7888,11 @@ class PlaybackService : MediaLibraryService() {
                         SonicAudioProcessor(),
                     ),
                 )
+                // Media3 1.11 hands every decoded PCM write to this provider;
+                // the HiBy branch is real OtHiByTrackUtils output, not a DSP label.
+                .setAudioOutputProvider(
+                    AurisAudioOutputProvider(context) { transition === activeFilter },
+                )
                 .build()
 
             // Transition filtering last of the three: widening is a
@@ -7900,11 +7908,25 @@ class PlaybackService : MediaLibraryService() {
                 delegate = defaultSink,
                 dspChain = dspChain,
                 enableFloatOutput = enableFloatOutput,
-                preferredOutputEncodingProvider = { format -> resolvePreferredOutputEncoding(format) },
+                preferredOutputEncodingProvider = { format ->
+                    if (AppSettings.qualityOptions.value &&
+                        AppSettings.referenceEngineMode.value == ReferenceEngineMode.HIBY
+                    ) {
+                        // OtHiByTrackUtils is configured for PCM16 in this
+                        // bridge; no float-as-integer format guessing.
+                        PcmEncoding.PCM_16BIT
+                    } else {
+                        resolvePreferredOutputEncoding(format)
+                    }
+                },
                 // Read per buffer by the sink, not captured once: the switch
                 // takes effect on the next decoder buffer and needs no rebuild
                 // of the player when the output encoding itself is unchanged.
-                bitPerfect = { AppSettings.bitPerfect.value },
+                bitPerfect = {
+                    AppSettings.bitPerfect.value ||
+                        (AppSettings.qualityOptions.value &&
+                            AppSettings.referenceEngineMode.value == ReferenceEngineMode.BIT_PERFECT)
+                },
                 // The userspace USB session, when a DAC has granted access.
                 // The sink only engages it for stereo tracks at the source
                 // rate; anything else stays on AudioTrack and says so.
@@ -8378,6 +8400,20 @@ class PlaybackService : MediaLibraryService() {
     }
 
     private fun observeSettings() {
+        scope.launch {
+            combine(AppSettings.qualityOptions, AppSettings.referenceEngineMode) { enabled, mode ->
+                enabled to mode
+            }.collect { (enabled, mode) ->
+                withContext(Dispatchers.IO) {
+                    if (enabled) {
+                        ReferenceEngineLoader.ensureLoaded(this@PlaybackService, mode)
+                    } else {
+                        ReferenceEngineLoader.bypass()
+                    }
+                }
+                requestOutputReconfiguration()
+            }
+        }
         scope.launch {
             AppSettings.skipSilence.collect { on -> eachPlayer { it.skipSilenceEnabled = on } }
         }

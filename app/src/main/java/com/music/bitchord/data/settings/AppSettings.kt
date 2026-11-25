@@ -106,6 +106,14 @@ enum class OutputPcmMode(val label: String) {
     FLOAT_32("32-bit float"),
 }
 
+/** Native reference graph selected while Quality Options is enabled. */
+enum class ReferenceEngineMode(val label: String) {
+    POWERAMP("Poweramp Reference"),
+    HIBY("HiBy Reference"),
+    HYBRID("Hybrid"),
+    BIT_PERFECT("Bit-perfect"),
+}
+
 /**
  * What to keep when a track is saved to the device.
  *
@@ -592,6 +600,12 @@ object AppSettings {
      * encoding the pipeline readout says so rather than claiming otherwise.
      */
     val bitPerfect = MutableStateFlow(false)
+
+    /** Master gate for the optional native PAWS/HiBy reference graph. */
+    val qualityOptions = MutableStateFlow(false)
+
+    /** Selected reference graph; persisted independently of [qualityOptions]. */
+    val referenceEngineMode = MutableStateFlow(ReferenceEngineMode.POWERAMP)
 
     /**
      * The listener's own volume, 0..1, as the app sees it.
@@ -1872,6 +1886,13 @@ object AppSettings {
             )
         }.getOrDefault(OutputPcmMode.PCM_16)
         bitPerfect.value = prefs.getBoolean(KEY_BIT_PERFECT, false)
+        qualityOptions.value = prefs.getBoolean(KEY_QUALITY_OPTIONS, false)
+        referenceEngineMode.value = runCatching {
+            ReferenceEngineMode.valueOf(
+                prefs.getString(KEY_REFERENCE_ENGINE_MODE, ReferenceEngineMode.POWERAMP.name)
+                    ?: ReferenceEngineMode.POWERAMP.name,
+            )
+        }.getOrDefault(ReferenceEngineMode.POWERAMP)
         preferUsbDac.value = prefs.getBoolean(KEY_PREFER_USB_DAC, false)
         // The listener's own level, remembered: the system volume cannot be
         // trusted on its own once a USB DAC is attached, because Android
@@ -3091,6 +3112,16 @@ object AppSettings {
         prefs.edit().putBoolean(KEY_BIT_PERFECT, value).apply()
     }
 
+    fun setQualityOptions(value: Boolean) {
+        if (::prefs.isInitialized && !prefs.edit().putBoolean(KEY_QUALITY_OPTIONS, value).commit()) return
+        qualityOptions.value = value
+    }
+
+    fun setReferenceEngineMode(value: ReferenceEngineMode) {
+        if (::prefs.isInitialized && !prefs.edit().putString(KEY_REFERENCE_ENGINE_MODE, value.name).commit()) return
+        referenceEngineMode.value = value
+    }
+
     /** Sets the face the whole app is set in. */
     fun setAppFont(value: String) {
         appFont.value = value
@@ -3613,6 +3644,8 @@ object AppSettings {
     private const val KEY_SKIP_SILENCE = "skip_silence"
     private const val KEY_OUTPUT_PCM_MODE = "output_pcm_mode"
     private const val KEY_BIT_PERFECT = "bit_perfect"
+    private const val KEY_QUALITY_OPTIONS = "quality_options"
+    private const val KEY_REFERENCE_ENGINE_MODE = "reference_engine_mode"
     private const val KEY_PREFER_USB_DAC = "prefer_usb_dac"
     private const val KEY_PLAYER_VOLUME = "player_volume"
     private const val KEY_LOUDNESS_NORMALIZATION = "loudness_normalization"
