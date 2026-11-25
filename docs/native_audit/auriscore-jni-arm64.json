@@ -1,0 +1,1001 @@
+{
+  "library": "app/src/main/jniLibs/arm64-v8a/libauriscore.so",
+  "register_natives_call_sites": 20,
+  "registered_method_count": 130,
+  "registrations": [
+    {
+      "call_site": "0x139854",
+      "class": "com/auris/milk/MilkLoader",
+      "method_count": 5,
+      "methods": [
+        {
+          "name": "native_create",
+          "signature": "(Landroid/content/res/AssetManager;Ljava/lang/String;Ljava/lang/String;IIII)J",
+          "function": "0x1399a8",
+          "table": "stack"
+        },
+        {
+          "name": "native_release",
+          "signature": "(J)V",
+          "function": "0x139bdc",
+          "table": "stack"
+        },
+        {
+          "name": "native_load_preset_by_uri",
+          "signature": "(JLjava/lang/String;Ljava/lang/String;IIZ)J",
+          "function": "0x139c50",
+          "table": "stack"
+        },
+        {
+          "name": "native_set_renderer_egl_context",
+          "signature": "(JJ)Z",
+          "function": "0x139e7c",
+          "table": "stack"
+        },
+        {
+          "name": "native_load_aa",
+          "signature": "(JLandroid/graphics/Bitmap;IFFFFF)J",
+          "function": "0x139f00",
+          "table": "stack"
+        }
+      ],
+      "smali_declared_count": 5,
+      "missing_from_smali": [],
+      "missing_from_registration": []
+    },
+    {
+      "call_site": "0x147848",
+      "class": "com/auris/milk/MilkNativeUtils",
+      "method_count": 1,
+      "methods": [
+        {
+          "name": "getGlStrings",
+          "signature": "([I)[Ljava/lang/String;",
+          "function": "0x1478b4",
+          "table": "stack"
+        }
+      ],
+      "smali_declared_count": 1,
+      "missing_from_smali": [],
+      "missing_from_registration": []
+    },
+    {
+      "call_site": "0x147c80",
+      "class": "com/auris/milk/MilkRenderer",
+      "method_count": 18,
+      "methods": [
+        {
+          "name": "native_create",
+          "signature": "(Landroid/content/res/AssetManager;JLandroid/view/Surface;Ljava/lang/String;Ljava/lang/String;IIIIIIFI)J",
+          "function": "0x147cf0",
+          "table": "stack"
+        },
+        {
+          "name": "native_release",
+          "signature": "(J)V",
+          "function": "0x14825c",
+          "table": "stack"
+        },
+        {
+          "name": "native_get_egl_context",
+          "signature": "(J)J",
+          "function": "0x1482b0",
+          "table": "stack"
+        },
+        {
+          "name": "native_render_frame",
+          "signature": "(JJ)Z",
+          "function": "0x1482dc",
+          "table": "stack"
+        },
+        {
+          "name": "native_size_changed",
+          "signature": "(JII)V",
+          "function": "0x148450",
+          "table": "stack"
+        },
+        {
+          "name": "native_set_bars_rect",
+          "signature": "(JIIII)V",
+          "function": "0x148484",
+          "table": "stack"
+        },
+        {
+          "name": "native_detach_surface",
+          "signature": "(J)V",
+          "function": "0x1484e4",
+          "table": "stack"
+        },
+        {
+          "name": "native_attach_surface",
+          "signature": "(JLandroid/view/Surface;)Z",
+          "function": "0x1484ec",
+          "table": "stack"
+        },
+        {
+          "name": "native_set_preset",
+          "signature": "(JJ)V",
+          "function": "0x1485b4",
+          "table": "stack"
+        },
+        {
+          "name": "native_set_audio_source_fd_and_serial",
+          "signature": "(JJ)V",
+          "function": "0x1485e4",
+          "table": "stack"
+        },
+        {
+          "name": "native_fade",
+          "signature": "(JZI)V",
+          "function": "0x148614",
+          "table": "stack"
+        },
+        {
+          "name": "native_set_aa",
+          "signature": "(JJZII)V",
+          "function": "0x148650",
+          "table": "stack"
+        },
+        {
+          "name": "native_set_aa_ratio",
+          "signature": "(JF)V",
+          "function": "0x148718",
+          "table": "stack"
+        },
+        {
+          "name": "native_commit_aa",
+          "signature": "(JII)V",
+          "function": "0x148744",
+          "table": "stack"
+        },
+        {
+          "name": "native_set_milk_mode",
+          "signature": "(JZI)Z",
+          "function": "0x148778",
+          "table": "stack"
+        },
+        {
+          "name": "native_on_resume",
+          "signature": "(J)V",
+          "function": "0x1487c4",
+          "table": "stack"
+        },
+        {
+          "name": "native_on_pause",
+          "signature": "(J)V",
+          "function": "0x148814",
+          "table": "stack"
+        },
+        {
+          "name": "native_get_and_reset_cache_save_failed",
+          "signature": "()Z",
+          "function": "0x148864",
+          "table": "stack"
+        }
+      ],
+      "smali_declared_count": 18,
+      "missing_from_smali": [],
+      "missing_from_registration": []
+    },
+    {
+      "call_site": "0x14ede0",
+      "class": "com/auris/milk/TempNativeRef",
+      "method_count": 1,
+      "methods": [
+        {
+          "name": "native_destroy",
+          "signature": "(J)V",
+          "function": "0x14ee54",
+          "table": "stack"
+        }
+      ],
+      "smali_declared_count": 1,
+      "missing_from_smali": [],
+      "missing_from_registration": []
+    },
+    {
+      "call_site": "0x1518c8",
+      "class": null,
+      "method_count": 8,
+      "methods": [
+        {
+          "name": "native_verify",
+          "signature": "(J)Z",
+          "function": "0x151ab4",
+          "table": "stack"
+        },
+        {
+          "name": "native_release",
+          "signature": "(J)V",
+          "function": "0x151ad4",
+          "table": "stack"
+        },
+        {
+          "name": "native_has_next",
+          "signature": "(J)Z",
+          "function": "0x151b34",
+          "table": "stack"
+        },
+        {
+          "name": "native_next",
+          "signature": "(J)Ljava/lang/String;",
+          "function": "0x151b9c",
+          "table": "stack"
+        },
+        {
+          "name": "native_get_found_zips",
+          "signature": "(J)[Ljava/lang/String;",
+          "function": "0x151ccc",
+          "table": "stack"
+        },
+        {
+          "name": "native_get_compiled_names_iterator",
+          "signature": "(Z)Lcom/auris/milk/NativePresetNamesIterator;",
+          "function": "0x151e40",
+          "table": "stack"
+        },
+        {
+          "name": "native_get_zip_names_iterator",
+          "signature": "(Ljava/lang/String;Ljava/lang/String;Z)Lcom/auris/milk/NativePresetNamesIterator;",
+          "function": "0x151ee8",
+          "table": "stack"
+        },
+        {
+          "name": "native_get_dir_names_iterator",
+          "signature": "(Ljava/lang/String;Z)Lcom/auris/milk/NativePresetNamesIterator;",
+          "function": "0x152014",
+          "table": "stack"
+        }
+      ],
+      "smali_declared_count": 0,
+      "missing_from_smali": [
+        "native_get_compiled_names_iterator(Z)Lcom/auris/milk/NativePresetNamesIterator;",
+        "native_get_dir_names_iterator(Ljava/lang/String;Z)Lcom/auris/milk/NativePresetNamesIterator;",
+        "native_get_found_zips(J)[Ljava/lang/String;",
+        "native_get_zip_names_iterator(Ljava/lang/String;Ljava/lang/String;Z)Lcom/auris/milk/NativePresetNamesIterator;",
+        "native_has_next(J)Z",
+        "native_next(J)Ljava/lang/String;",
+        "native_release(J)V",
+        "native_verify(J)Z"
+      ],
+      "missing_from_registration": []
+    },
+    {
+      "call_site": "0x16edbc",
+      "class": "com/auris/audioplayer/jni/Zip",
+      "method_count": 10,
+      "methods": [
+        {
+          "name": "native_create",
+          "signature": "(IZ)J",
+          "function": "0x16ee40",
+          "table": "stack"
+        },
+        {
+          "name": "native_create",
+          "signature": "(Ljava/lang/String;Z)J",
+          "function": "0x16f0c0",
+          "table": "stack"
+        },
+        {
+          "name": "native_release",
+          "signature": "(J)V",
+          "function": "0x16f310",
+          "table": "stack"
+        },
+        {
+          "name": "native_add_file",
+          "signature": "(JLjava/lang/String;Ljava/lang/String;I)Z",
+          "function": "0x16f3d0",
+          "table": "stack"
+        },
+        {
+          "name": "native_add_bytes",
+          "signature": "(JLjava/lang/String;[BI)Z",
+          "function": "0x16f870",
+          "table": "stack"
+        },
+        {
+          "name": "native_get_num_entries",
+          "signature": "(J)J",
+          "function": "0x16fd40",
+          "table": "stack"
+        },
+        {
+          "name": "native_copy_to_file",
+          "signature": "(JJLjava/lang/String;)Z",
+          "function": "0x16fdc0",
+          "table": "stack"
+        },
+        {
+          "name": "native_get_bytes",
+          "signature": "(JJ)[B",
+          "function": "0x1701a0",
+          "table": "stack"
+        },
+        {
+          "name": "native_get_path_in_zip",
+          "signature": "(JJ)Ljava/lang/String;",
+          "function": "0x170540",
+          "table": "stack"
+        },
+        {
+          "name": "native_get_file_size",
+          "signature": "(JJ)J",
+          "function": "0x1706b0",
+          "table": "stack"
+        }
+      ],
+      "smali_declared_count": 10,
+      "missing_from_smali": [],
+      "missing_from_registration": []
+    },
+    {
+      "call_site": "0x170a30",
+      "class": "com/auris/audioplayer/decoder/ScanDecode",
+      "method_count": 3,
+      "methods": [
+        {
+          "name": "native_create",
+          "signature": "()J",
+          "function": "0x170ab0",
+          "table": "stack"
+        },
+        {
+          "name": "native_release",
+          "signature": "(J)V",
+          "function": "0x170b10",
+          "table": "stack"
+        },
+        {
+          "name": "native_scan",
+          "signature": "(JLjava/lang/String;III[B)[F",
+          "function": "0x170b60",
+          "table": "stack"
+        }
+      ],
+      "smali_declared_count": 3,
+      "missing_from_smali": [],
+      "missing_from_registration": []
+    },
+    {
+      "call_site": "0x1740e8",
+      "class": null,
+      "method_count": 5,
+      "methods": [
+        {
+          "name": "native_create",
+          "signature": "()J",
+          "function": "0x1742b0",
+          "table": "stack"
+        },
+        {
+          "name": "native_release",
+          "signature": "(J)V",
+          "function": "0x1742f8",
+          "table": "stack"
+        },
+        {
+          "name": "native_scan_file",
+          "signature": "(JLjava/lang/String;IIILcom/auris/audioplayer/scanner/TagAndMeta;)I",
+          "function": "0x1743a4",
+          "table": "stack"
+        },
+        {
+          "name": "native_set_max_tag",
+          "signature": "(I)V",
+          "function": "0x174584",
+          "table": "stack"
+        },
+        {
+          "name": "native_get_test_ashmem_fd",
+          "signature": "()I",
+          "function": "0x174590",
+          "table": "stack"
+        }
+      ],
+      "smali_declared_count": 0,
+      "missing_from_smali": [
+        "native_create()J",
+        "native_get_test_ashmem_fd()I",
+        "native_release(J)V",
+        "native_scan_file(JLjava/lang/String;IIILcom/auris/audioplayer/scanner/TagAndMeta;)I",
+        "native_set_max_tag(I)V"
+      ],
+      "missing_from_registration": []
+    },
+    {
+      "call_site": "0x17bb2c",
+      "class": "com/auris/audioplayer/scanner/TagWriter",
+      "method_count": 1,
+      "methods": [
+        {
+          "name": "native_write_tags",
+          "signature": "(Ljava/lang/String;IILcom/auris/audioplayer/scanner/TagAndMeta;)Z",
+          "function": "0x17bba0",
+          "table": "0x478180"
+        }
+      ],
+      "smali_declared_count": 1,
+      "missing_from_smali": [],
+      "missing_from_registration": []
+    },
+    {
+      "call_site": "0x2d2388",
+      "class": null,
+      "method_count": 10,
+      "methods": [
+        {
+          "error": "unresolved table entry 0"
+        },
+        {
+          "name": "",
+          "signature": "",
+          "function": "0x31",
+          "table": "stack"
+        },
+        {
+          "name": "",
+          "signature": "",
+          "function": "0x61",
+          "table": "stack"
+        },
+        {
+          "name": "",
+          "signature": "",
+          "function": "0x6c53",
+          "table": "stack"
+        },
+        {
+          "error": "unresolved table entry 4"
+        },
+        {
+          "name": null,
+          "signature": null,
+          "function": "0x55",
+          "table": "stack"
+        },
+        {
+          "name": null,
+          "signature": null,
+          "function": "0x43000",
+          "table": "stack"
+        },
+        {
+          "name": null,
+          "signature": null,
+          "function": "0x44000",
+          "table": "stack"
+        },
+        {
+          "name": null,
+          "signature": null,
+          "function": "0x44000",
+          "table": "stack"
+        },
+        {
+          "name": null,
+          "signature": null,
+          "function": "0x43000",
+          "table": "stack"
+        }
+      ],
+      "smali_declared_count": 0,
+      "missing_from_smali": [
+        "",
+        "NoneNone"
+      ],
+      "missing_from_registration": []
+    },
+    {
+      "call_site": "0x2dda1c",
+      "class": "com/auris/audioplayer/plugin/NativePluginManager",
+      "method_count": 1,
+      "methods": [
+        {
+          "name": "native_get_plugins",
+          "signature": "()[Lcom/auris/audioplayer/plugin/NativePluginInfo;",
+          "function": "0x2ddb5c",
+          "table": "stack"
+        }
+      ],
+      "smali_declared_count": 1,
+      "missing_from_smali": [],
+      "missing_from_registration": []
+    },
+    {
+      "call_site": "0x2dde88",
+      "class": "com/auris/equalizer/eq/PeqNativeUtils",
+      "method_count": 6,
+      "methods": [
+        {
+          "name": "command",
+          "signature": "(Ljava/lang/Object;I[B[B)I",
+          "function": "0x2ddf2c",
+          "table": "stack"
+        },
+        {
+          "name": "setEnabled",
+          "signature": "(Ljava/lang/Object;Z)I",
+          "function": "0x2ddf44",
+          "table": "stack"
+        },
+        {
+          "name": "poke_fx",
+          "signature": "(Ljava/lang/Object;)I",
+          "function": "0x2ddf60",
+          "table": "stack"
+        },
+        {
+          "name": "setParameterDeferred",
+          "signature": "(Ljava/lang/Object;[B)I",
+          "function": "0x2ddf98",
+          "table": "stack"
+        },
+        {
+          "name": "setParameterCommit",
+          "signature": "(Ljava/lang/Object;)I",
+          "function": "0x2de018",
+          "table": "stack"
+        },
+        {
+          "name": "setParameter",
+          "signature": "(Ljava/lang/Object;[B)I",
+          "function": "0x2de050",
+          "table": "stack"
+        }
+      ],
+      "smali_declared_count": 7,
+      "missing_from_smali": [],
+      "missing_from_registration": [
+        "getParameter(Ljava/lang/Object;[B[B)I"
+      ]
+    },
+    {
+      "call_site": "0x2de190",
+      "class": "com/auris/audioplayer/jni/NativeUtils",
+      "method_count": 18,
+      "methods": [
+        {
+          "name": "native_android_index_to_millib",
+          "signature": "(III)F",
+          "function": "0x2de260",
+          "table": "stack"
+        },
+        {
+          "name": "native_scan_mnt",
+          "signature": "(Ljava/util/ArrayList;Ljava/lang/String;)V",
+          "function": "0x2de270",
+          "table": "stack"
+        },
+        {
+          "name": "native_file_exists",
+          "signature": "(Ljava/lang/String;)Z",
+          "function": "0x2de3ec",
+          "table": "stack"
+        },
+        {
+          "name": "native_file_writeable",
+          "signature": "(Ljava/lang/String;)Z",
+          "function": "0x2de43c",
+          "table": "stack"
+        },
+        {
+          "name": "native_set_fd",
+          "signature": "(Ljava/io/FileDescriptor;I)Z",
+          "function": "0x2de494",
+          "table": "stack"
+        },
+        {
+          "name": "native_open_fd",
+          "signature": "([CIIIIZ)I",
+          "function": "0x2de4fc",
+          "table": "stack"
+        },
+        {
+          "name": "native_open_fd_str",
+          "signature": "(Ljava/lang/String;IIZ)I",
+          "function": "0x2de6ac",
+          "table": "stack"
+        },
+        {
+          "name": "native_close_fd",
+          "signature": "(I)I",
+          "function": "0x2de810",
+          "table": "stack"
+        },
+        {
+          "name": "native_file_size_ar",
+          "signature": "([CII)J",
+          "function": "0x2de894",
+          "table": "stack"
+        },
+        {
+          "name": "native_file_rename_ar",
+          "signature": "([CII[CII)Z",
+          "function": "0x2de9d4",
+          "table": "stack"
+        },
+        {
+          "name": "native_fd_lseek",
+          "signature": "(IJI)J",
+          "function": "0x2debe4",
+          "table": "stack"
+        },
+        {
+          "name": "native_get_system_property",
+          "signature": "(Ljava/lang/String;)Ljava/lang/String;",
+          "function": "0x2dec24",
+          "table": "stack"
+        },
+        {
+          "name": "native_fd_st_mode",
+          "signature": "(I)I",
+          "function": "0x2decdc",
+          "table": "stack"
+        },
+        {
+          "name": "pread_byte",
+          "signature": "(IJ[B)Z",
+          "function": "0x2ded30",
+          "table": "stack"
+        },
+        {
+          "name": "pwrite_byte",
+          "signature": "(IJB)Z",
+          "function": "0x2dee1c",
+          "table": "stack"
+        },
+        {
+          "name": "native_AudioEffect_getParameter",
+          "signature": "(Landroid/media/audiofx/AudioEffect;I[S)I",
+          "function": "0x2deea0",
+          "table": "stack"
+        },
+        {
+          "name": "native_mkdirs_for_file",
+          "signature": "(Ljava/lang/String;)Z",
+          "function": "0x2def28",
+          "table": "stack"
+        },
+        {
+          "name": "native_mkdirs_for_file_ar",
+          "signature": "([CII)Z",
+          "function": "0x2deff8",
+          "table": "stack"
+        }
+      ],
+      "smali_declared_count": 18,
+      "missing_from_smali": [],
+      "missing_from_registration": []
+    },
+    {
+      "call_site": "0x2dfa74",
+      "class": "com/auris/audioplayer/plugin/OutputInternalHelper",
+      "method_count": 5,
+      "methods": [
+        {
+          "name": "native_output_get_supported_devices",
+          "signature": "(I)I",
+          "function": "0x2dfae0",
+          "table": "stack"
+        },
+        {
+          "name": "native_output_get_options",
+          "signature": "(II[B)J",
+          "function": "0x2dfb58",
+          "table": "stack"
+        },
+        {
+          "name": "native_output_get_sample_rates",
+          "signature": "(IIZ)I",
+          "function": "0x2dfcf0",
+          "table": "stack"
+        },
+        {
+          "name": "native_output_get_sample_formats",
+          "signature": "(II)I",
+          "function": "0x2dfd7c",
+          "table": "stack"
+        },
+        {
+          "name": "native_output_get_generic_property",
+          "signature": "(III)I",
+          "function": "0x2dfdf8",
+          "table": "stack"
+        }
+      ],
+      "smali_declared_count": 5,
+      "missing_from_smali": [],
+      "missing_from_registration": []
+    },
+    {
+      "call_site": "0x2e4838",
+      "class": "com/auris/audioplayer/processing/Pipeline2",
+      "method_count": 25,
+      "methods": [
+        {
+          "name": "native_test_mode",
+          "signature": "(J)V",
+          "function": "0x2e4c5c",
+          "table": "stack"
+        },
+        {
+          "name": "native_create",
+          "signature": "()J",
+          "function": "0x2e4d08",
+          "table": "stack"
+        },
+        {
+          "name": "native_build",
+          "signature": "(JLjava/nio/ByteBuffer;Ljava/nio/ByteBuffer;I)I",
+          "function": "0x2e4fa8",
+          "table": "stack"
+        },
+        {
+          "name": "native_release",
+          "signature": "(J)I",
+          "function": "0x2e5578",
+          "table": "stack"
+        },
+        {
+          "name": "native_request_reconfigure",
+          "signature": "(J)I",
+          "function": "0x2e55b0",
+          "table": "stack"
+        },
+        {
+          "name": "native_request_open",
+          "signature": "(JLjava/lang/String;I[BIII)I",
+          "function": "0x2e5608",
+          "table": "stack"
+        },
+        {
+          "name": "native_resume",
+          "signature": "(JZ)I",
+          "function": "0x2e5858",
+          "table": "stack"
+        },
+        {
+          "name": "native_pause",
+          "signature": "(JZ)I",
+          "function": "0x2e5924",
+          "table": "stack"
+        },
+        {
+          "name": "native_pause_hard",
+          "signature": "(J)I",
+          "function": "0x2e598c",
+          "table": "stack"
+        },
+        {
+          "name": "native_stop",
+          "signature": "(JZZ)I",
+          "function": "0x2e59ec",
+          "table": "stack"
+        },
+        {
+          "name": "native_seek",
+          "signature": "(JIII)V",
+          "function": "0x2e5a88",
+          "table": "stack"
+        },
+        {
+          "name": "native_get_state",
+          "signature": "(J)I",
+          "function": "0x2e5bac",
+          "table": "stack"
+        },
+        {
+          "name": "native_sleep_until_java_cmd",
+          "signature": "(J)I",
+          "function": "0x2e5bd8",
+          "table": "stack"
+        },
+        {
+          "name": "native_post_cmd",
+          "signature": "(JII)V",
+          "function": "0x2e5c48",
+          "table": "stack"
+        },
+        {
+          "name": "native_get_position_ms",
+          "signature": "(JI)I",
+          "function": "0x2e5c7c",
+          "table": "stack"
+        },
+        {
+          "name": "native_set_end_event_position_ms",
+          "signature": "(JII)V",
+          "function": "0x2e5cd4",
+          "table": "stack"
+        },
+        {
+          "name": "native_get_int_param",
+          "signature": "(JIII)I",
+          "function": "0x2e5d48",
+          "table": "stack"
+        },
+        {
+          "name": "native_get_long_param",
+          "signature": "(JIIJ)J",
+          "function": "0x2e5dd4",
+          "table": "stack"
+        },
+        {
+          "name": "native_route_msg",
+          "signature": "(J[BI)Z",
+          "function": "0x2e5e44",
+          "table": "stack"
+        },
+        {
+          "name": "native_route_msg",
+          "signature": "(J[II)Z",
+          "function": "0x2e5f78",
+          "table": "stack"
+        },
+        {
+          "name": "native_route_msg",
+          "signature": "(JIIII)Z",
+          "function": "0x2e60b0",
+          "table": "stack"
+        },
+        {
+          "name": "native_route_msg",
+          "signature": "(JIIIII)Z",
+          "function": "0x2e6100",
+          "table": "stack"
+        },
+        {
+          "name": "native_route_msg",
+          "signature": "(JIIIIIII)Z",
+          "function": "0x2e6154",
+          "table": "stack"
+        },
+        {
+          "name": "native_route_msg",
+          "signature": "(JIIIIIIII)Z",
+          "function": "0x2e61d4",
+          "table": "stack"
+        },
+        {
+          "name": "native_route_msg",
+          "signature": "(JIIIIIIIII)Z",
+          "function": "0x2e622c",
+          "table": "stack"
+        }
+      ],
+      "smali_declared_count": 25,
+      "missing_from_smali": [],
+      "missing_from_registration": []
+    },
+    {
+      "call_site": "0x307314",
+      "class": "com/auris/audioplayer/equalizer/Coefs",
+      "method_count": 4,
+      "methods": [
+        {
+          "name": "native_calc_coefs",
+          "signature": "(IIIF[D)I",
+          "function": "0x30750c",
+          "table": "stack"
+        },
+        {
+          "name": "native_calc_bands_coefs",
+          "signature": "(I[Lcom/auris/dsp/data/Band;[[D)I",
+          "function": "0x3076ac",
+          "table": "stack"
+        },
+        {
+          "name": "native_filter_evaluate_freqs",
+          "signature": "(IIIFFFIF[F)V",
+          "function": "0x307ad4",
+          "table": "stack"
+        },
+        {
+          "name": "native_modify_coefs_for_gain",
+          "signature": "([DIIIFF)Z",
+          "function": "0x307f40",
+          "table": "stack"
+        }
+      ],
+      "smali_declared_count": 4,
+      "missing_from_smali": [],
+      "missing_from_registration": []
+    },
+    {
+      "call_site": "0x30cad0",
+      "class": "com/auris/audioplayer/scanner/FFMpegTagReader",
+      "method_count": 3,
+      "methods": [
+        {
+          "name": "native_scan_file",
+          "signature": "(Ljava/lang/String;IIILcom/auris/audioplayer/scanner/TagAndMeta;)I",
+          "function": "0x30cb78",
+          "table": "stack"
+        },
+        {
+          "name": "native_scan_file_type",
+          "signature": "(Ljava/lang/String;II)I",
+          "function": "0x30d2d8",
+          "table": "stack"
+        },
+        {
+          "name": "native_dump_probe_metrics",
+          "signature": "()Ljava/lang/String;",
+          "function": "0x30da6c",
+          "table": "stack"
+        }
+      ],
+      "smali_declared_count": 3,
+      "missing_from_smali": [],
+      "missing_from_registration": []
+    },
+    {
+      "call_site": "0x3118a8",
+      "class": "com/auris/audioplayer/scanner/ModTagReader",
+      "method_count": 3,
+      "methods": [
+        {
+          "name": "native_scan_file",
+          "signature": "(Lcom/auris/audioplayer/scanner/TagReader;JLjava/lang/String;IIILcom/auris/audioplayer/scanner/TagAndMeta;)I",
+          "function": "0x311950",
+          "table": "stack"
+        },
+        {
+          "name": "native_begin_metrics",
+          "signature": "()V",
+          "function": "0x312168",
+          "table": "stack"
+        },
+        {
+          "name": "native_dump_metrics",
+          "signature": "()Ljava/lang/String;",
+          "function": "0x31216c",
+          "table": "stack"
+        }
+      ],
+      "smali_declared_count": 3,
+      "missing_from_smali": [],
+      "missing_from_registration": []
+    },
+    {
+      "call_site": "0x31b280",
+      "class": "com/auris/audioplayer/output/cc/CcPluginService",
+      "method_count": 2,
+      "methods": [
+        {
+          "name": "native_get_samples",
+          "signature": "(J[B)I",
+          "function": "0x31b488",
+          "table": "stack"
+        },
+        {
+          "name": "native_register",
+          "signature": "(JLcom/auris/audioplayer/output/cc/CcPluginService;)V",
+          "function": "0x31b67c",
+          "table": "stack"
+        }
+      ],
+      "smali_declared_count": 2,
+      "missing_from_smali": [],
+      "missing_from_registration": []
+    },
+    {
+      "call_site": "0x31c970",
+      "class": "com/auris/audioplayer/output/cc/NativeRef",
+      "method_count": 1,
+      "methods": [
+        {
+          "name": "native_release",
+          "signature": "(J)V",
+          "function": "0x31ca70",
+          "table": "stack"
+        }
+      ],
+      "smali_declared_count": 1,
+      "missing_from_smali": [],
+      "missing_from_registration": []
+    }
+  ]
+}

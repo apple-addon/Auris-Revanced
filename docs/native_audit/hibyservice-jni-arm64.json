@@ -1,0 +1,428 @@
+{
+  "library": "app/src/main/jniLibs/arm64-v8a/libhibyservice.so",
+  "register_natives_call_sites": 7,
+  "registered_method_count": 58,
+  "registrations": [
+    {
+      "call_site": "0x167564",
+      "class": "com/hiby/music/sdk/SmartAv",
+      "method_count": 45,
+      "methods": [
+        {
+          "name": "native_init",
+          "signature": "(ILjava/lang/String;IZILjava/lang/String;)I",
+          "function": "0x167838",
+          "table": "0x49d958"
+        },
+        {
+          "name": "native_deinit",
+          "signature": "()I",
+          "function": "0x167b04",
+          "table": "0x49d958"
+        },
+        {
+          "name": "native_play",
+          "signature": "(Ljava/lang/String;)I",
+          "function": "0x167b08",
+          "table": "0x49d958"
+        },
+        {
+          "name": "native_play",
+          "signature": "(Ljava/lang/String;IIILjava/lang/String;II)I",
+          "function": "0x167b94",
+          "table": "0x49d958"
+        },
+        {
+          "name": "native_pause",
+          "signature": "()V",
+          "function": "0x167cd4",
+          "table": "0x49d958"
+        },
+        {
+          "name": "native_flush",
+          "signature": "()V",
+          "function": "0x167ce4",
+          "table": "0x49d958"
+        },
+        {
+          "name": "native_seek",
+          "signature": "(I)V",
+          "function": "0x167ce8",
+          "table": "0x49d958"
+        },
+        {
+          "name": "native_resume",
+          "signature": "()V",
+          "function": "0x167d40",
+          "table": "0x49d958"
+        },
+        {
+          "name": "native_stop",
+          "signature": "()V",
+          "function": "0x167d50",
+          "table": "0x49d958"
+        },
+        {
+          "name": "native_position",
+          "signature": "()I",
+          "function": "0x167d60",
+          "table": "0x49d958"
+        },
+        {
+          "name": "native_getDuration",
+          "signature": "()I",
+          "function": "0x167db8",
+          "table": "0x49d958"
+        },
+        {
+          "name": "native_setOutputDevice",
+          "signature": "(I)I",
+          "function": "0x167e18",
+          "table": "0x49d958"
+        },
+        {
+          "name": "native_getObjectAttr",
+          "signature": "(Ljava/lang/String;I)Ljava/lang/Object;",
+          "function": "0x167e98",
+          "table": "0x49d958"
+        },
+        {
+          "name": "native_setObjectAttr",
+          "signature": "(Ljava/lang/String;Ljava/lang/Object;)V",
+          "function": "0x167ee8",
+          "table": "0x49d958"
+        },
+        {
+          "name": "native_setPeqValue",
+          "signature": "(Ljava/lang/String;I)V",
+          "function": "0x168408",
+          "table": "0x49d958"
+        },
+        {
+          "name": "native_setPeqValue",
+          "signature": "(Ljava/lang/String;F)V",
+          "function": "0x168468",
+          "table": "0x49d958"
+        },
+        {
+          "name": "native_getIntAttr",
+          "signature": "(Ljava/lang/String;)I",
+          "function": "0x1684d0",
+          "table": "0x49d958"
+        },
+        {
+          "name": "native_setIntAttr",
+          "signature": "(Ljava/lang/String;I)V",
+          "function": "0x16867c",
+          "table": "0x49d958"
+        },
+        {
+          "name": "native_get_current_device_name",
+          "signature": "()[B",
+          "function": "0x168ac0",
+          "table": "0x49d958"
+        },
+        {
+          "name": "native_replayGain",
+          "signature": "(Ljava/lang/String;Ljava/lang/String;I)V",
+          "function": "0x168bb4",
+          "table": "0x49d958"
+        },
+        {
+          "name": "native_setUacPackageAdjust",
+          "signature": "(I)I",
+          "function": "0x168ee0",
+          "table": "0x49d958"
+        },
+        {
+          "name": "native_setUacWorkMode",
+          "signature": "(I)I",
+          "function": "0x168ee8",
+          "table": "0x49d958"
+        },
+        {
+          "name": "native_setUacDsdCompensate",
+          "signature": "(I)I",
+          "function": "0x168ef0",
+          "table": "0x49d958"
+        },
+        {
+          "name": "native_getMmqMessage",
+          "signature": "()V",
+          "function": "0x168ef8",
+          "table": "0x49d958"
+        },
+        {
+          "name": "native_resetMmqMessageCatch",
+          "signature": "()V",
+          "function": "0x168f38",
+          "table": "0x49d958"
+        },
+        {
+          "name": "native_getEmbeddedLyric",
+          "signature": "(Ljava/lang/String;)Ljava/lang/String;",
+          "function": "0x168f4c",
+          "table": "0x49d958"
+        },
+        {
+          "name": "native_getEmbeddedCue",
+          "signature": "(Ljava/lang/String;)Ljava/lang/String;",
+          "function": "0x169104",
+          "table": "0x49d958"
+        },
+        {
+          "name": "native_setUacBusSpeed",
+          "signature": "(I)I",
+          "function": "0x1692bc",
+          "table": "0x49d958"
+        },
+        {
+          "name": "native_setSampleBits",
+          "signature": "(I)I",
+          "function": "0x1692c4",
+          "table": "0x49d958"
+        },
+        {
+          "name": "native_setResetAlt",
+          "signature": "(I)I",
+          "function": "0x1692cc",
+          "table": "0x49d958"
+        },
+        {
+          "name": "native_setUacMaxDsdSampleRate",
+          "signature": "(I)I",
+          "function": "0x1692d4",
+          "table": "0x49d958"
+        },
+        {
+          "name": "native_getSupportBitsMask",
+          "signature": "()I",
+          "function": "0x1692dc",
+          "table": "0x49d958"
+        },
+        {
+          "name": "native_setMaxSampleRate",
+          "signature": "(I)V",
+          "function": "0x1692e0",
+          "table": "0x49d958"
+        },
+        {
+          "name": "native_setMmqMaxRate",
+          "signature": "(I)V",
+          "function": "0x1692e8",
+          "table": "0x49d958"
+        },
+        {
+          "name": "native_getRoonSampleRate",
+          "signature": "()I",
+          "function": "0x1692f8",
+          "table": "0x49d958"
+        },
+        {
+          "name": "native_getRoonSampleBit",
+          "signature": "()I",
+          "function": "0x169314",
+          "table": "0x49d958"
+        },
+        {
+          "name": "native_getLocalMmqSampleBit",
+          "signature": "()I",
+          "function": "0x169318",
+          "table": "0x49d958"
+        },
+        {
+          "name": "native_setMmqDither",
+          "signature": "(I)V",
+          "function": "0x169324",
+          "table": "0x49d958"
+        },
+        {
+          "name": "native_SonyPlay",
+          "signature": "(Ljava/lang/String;IIIIILjava/lang/String;Ljava/lang/String;Ljava/lang/String;)I",
+          "function": "0x169334",
+          "table": "0x49d958"
+        },
+        {
+          "name": "native_getObjectSonyAttr",
+          "signature": "(Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;I)Ljava/lang/Object;",
+          "function": "0x169534",
+          "table": "0x49d958"
+        },
+        {
+          "name": "native_setDsdSampleRateSupport",
+          "signature": "(I)V",
+          "function": "0x169a84",
+          "table": "0x49d958"
+        },
+        {
+          "name": "native_setDsd2pcmSampleRate",
+          "signature": "(II)V",
+          "function": "0x169a90",
+          "table": "0x49d958"
+        },
+        {
+          "name": "dumpAudioUnit",
+          "signature": "()[B",
+          "function": "0x169a9c",
+          "table": "0x49d958"
+        },
+        {
+          "name": "native_setLiveMode",
+          "signature": "(I)V",
+          "function": "0x169b88",
+          "table": "0x49d958"
+        },
+        {
+          "name": "nativeSetSmartAudioBackend",
+          "signature": "(I)V",
+          "function": "0x169bc4",
+          "table": "0x49d958"
+        }
+      ],
+      "smali_declared_count": 47,
+      "missing_from_smali": [],
+      "missing_from_registration": [
+        "native_getLyric(Ljava/lang/String;)Ljava/lang/String;",
+        "native_get_usbdevice_type(II)I"
+      ]
+    },
+    {
+      "call_site": "0x167678",
+      "class": "com/hiby/music/sdk/vieweffect/vu/VUTools",
+      "method_count": 3,
+      "methods": [
+        {
+          "name": "nativeGetNextData",
+          "signature": "()Ljava/lang/Object;",
+          "function": "0x16b790",
+          "table": "0x49dd90"
+        },
+        {
+          "name": "checkValidState",
+          "signature": "()Z",
+          "function": "0x16b82c",
+          "table": "0x49dd90"
+        },
+        {
+          "name": "nativeModifypts",
+          "signature": "(I)V",
+          "function": "0x16b848",
+          "table": "0x49dd90"
+        }
+      ],
+      "smali_declared_count": 3,
+      "missing_from_smali": [],
+      "missing_from_registration": []
+    },
+    {
+      "call_site": "0x174f40",
+      "class": "com/hiby/music/sdk/util/jnithread/JniThreadPoolWorker",
+      "method_count": 1,
+      "methods": [
+        {
+          "name": "native_run",
+          "signature": "(Ljava/util/concurrent/ThreadPoolExecutor;I)V",
+          "function": "0x1754f0",
+          "table": "0x49de78"
+        }
+      ],
+      "smali_declared_count": 1,
+      "missing_from_smali": [],
+      "missing_from_registration": []
+    },
+    {
+      "call_site": "0x445388",
+      "class": "com/hiby/music/sdk/util/AudioUtils",
+      "method_count": 1,
+      "methods": [
+        {
+          "name": "nativeSetDirectBuffer",
+          "signature": "(Ljava/lang/Object;I)V",
+          "function": "0x445edc",
+          "table": "0x4c98b0"
+        }
+      ],
+      "smali_declared_count": 1,
+      "missing_from_smali": [],
+      "missing_from_registration": []
+    },
+    {
+      "call_site": "0x4461e8",
+      "class": "com/hiby/music/sdk/util/AudioUtilsHiRes",
+      "method_count": 1,
+      "methods": [
+        {
+          "name": "nativeSetDirectBuffer",
+          "signature": "(Ljava/lang/Object;I)V",
+          "function": "0x446b58",
+          "table": "0x4c98d0"
+        }
+      ],
+      "smali_declared_count": 1,
+      "missing_from_smali": [],
+      "missing_from_registration": []
+    },
+    {
+      "call_site": "0x44b488",
+      "class": "com/hiby/music/sdk/lhdc/SmartLHDC",
+      "method_count": 3,
+      "methods": [
+        {
+          "name": "native_lhdc_read",
+          "signature": "(I)[B",
+          "function": "0x44b5dc",
+          "table": "0x4c98f0"
+        },
+        {
+          "name": "native_notify_status_changed",
+          "signature": "(I)I",
+          "function": "0x44b6e0",
+          "table": "0x4c98f0"
+        },
+        {
+          "name": "native_lhdc_set_sample_rate",
+          "signature": "(I)I",
+          "function": "0x44b6fc",
+          "table": "0x4c98f0"
+        }
+      ],
+      "smali_declared_count": 3,
+      "missing_from_smali": [],
+      "missing_from_registration": []
+    },
+    {
+      "call_site": "0x44c5d0",
+      "class": "com/hiby/music/sdk/uat/SmartUAT",
+      "method_count": 4,
+      "methods": [
+        {
+          "name": "native_uat_read",
+          "signature": "(I)[B",
+          "function": "0x44c684",
+          "table": "0x4c9940"
+        },
+        {
+          "name": "native_uat_notify_status_changed",
+          "signature": "(I)I",
+          "function": "0x44c76c",
+          "table": "0x4c9940"
+        },
+        {
+          "name": "native_uat_set_sample_rate",
+          "signature": "(I)I",
+          "function": "0x44c788",
+          "table": "0x4c9940"
+        },
+        {
+          "name": "native_uat_request_data_timeout",
+          "signature": "(I)I",
+          "function": "0x44c7a4",
+          "table": "0x4c9940"
+        }
+      ],
+      "smali_declared_count": 4,
+      "missing_from_smali": [],
+      "missing_from_registration": []
+    }
+  ]
+}

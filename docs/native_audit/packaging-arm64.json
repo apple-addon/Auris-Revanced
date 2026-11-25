@@ -1,0 +1,256 @@
+{
+  "source": ".",
+  "arm64_shared_object_count": 12,
+  "results": [
+    {
+      "name": "app/src/main/jniLibs/arm64-v8a/libauriscore.so",
+      "sha256": "b48e094d1f2adb371e3d461b62fe75bfc21656a1157c29126ceebaa7ac5d1524",
+      "load_alignments": [
+        "0x4000",
+        "0x4000",
+        "0x4000"
+      ],
+      "aligned_16k": true,
+      "gnu_relro": true,
+      "bind_now": true,
+      "needed": [
+        "libffmpeg_neon.so",
+        "libandroid.so",
+        "liblog.so",
+        "libz.so",
+        "libdl.so",
+        "libc.so",
+        "libOpenSLES.so",
+        "libmediandk.so",
+        "libjnigraphics.so",
+        "libEGL.so",
+        "libGLESv2.so",
+        "libm.so"
+      ],
+      "unresolved_needed": [],
+      "libstdcpp_needed": false
+    },
+    {
+      "name": "app/src/main/jniLibs/arm64-v8a/libffmpegJNI.so",
+      "sha256": "1842d2b3c6c7ca0333fe58f36da7862289076acac3e1523405f86f5c2c043360",
+      "load_alignments": [
+        "0x4000",
+        "0x4000",
+        "0x4000",
+        "0x4000"
+      ],
+      "aligned_16k": true,
+      "gnu_relro": true,
+      "bind_now": true,
+      "needed": [
+        "liblog.so",
+        "libm.so",
+        "libdl.so",
+        "libc.so"
+      ],
+      "unresolved_needed": [],
+      "libstdcpp_needed": false
+    },
+    {
+      "name": "app/src/main/jniLibs/arm64-v8a/libffmpeg_neon.so",
+      "sha256": "207a33359e2358e9cdd276f286faebf13c48f938a0e3f0cc723b0950fa456f07",
+      "load_alignments": [
+        "0x4000",
+        "0x4000",
+        "0x4000"
+      ],
+      "aligned_16k": true,
+      "gnu_relro": true,
+      "bind_now": true,
+      "needed": [
+        "libm.so",
+        "liblog.so",
+        "libz.so",
+        "libc.so",
+        "libdl.so"
+      ],
+      "unresolved_needed": [],
+      "libstdcpp_needed": false
+    },
+    {
+      "name": "app/src/main/jniLibs/arm64-v8a/libhibyaudioutils.so",
+      "sha256": "4d742f45b0076686731a530340d4aa44e73799cfc7d87469c20056dadebaaf1f",
+      "load_alignments": [
+        "0x4000",
+        "0x4000",
+        "0x4000"
+      ],
+      "aligned_16k": true,
+      "gnu_relro": true,
+      "bind_now": true,
+      "needed": [
+        "liblog.so",
+        "libm.so",
+        "libdl.so",
+        "libc.so"
+      ],
+      "unresolved_needed": [],
+      "libstdcpp_needed": false
+    },
+    {
+      "name": "app/src/main/jniLibs/arm64-v8a/libhibyservice.so",
+      "sha256": "dce9a1a682dfc76b682a69eb75226019cbe2d1a827bad038b0a4c8ca81b931fe",
+      "load_alignments": [
+        "0x4000",
+        "0x4000",
+        "0x4000"
+      ],
+      "aligned_16k": true,
+      "gnu_relro": true,
+      "bind_now": true,
+      "needed": [
+        "libz.so",
+        "libhibyaudioutils.so",
+        "libsmartusb_jni.so",
+        "libusb.so",
+        "liblog.so",
+        "libm.so",
+        "libdl.so",
+        "libc.so"
+      ],
+      "unresolved_needed": [],
+      "libstdcpp_needed": false
+    },
+    {
+      "name": "app/src/main/jniLibs/arm64-v8a/liblhdc.so",
+      "sha256": "f0982785f10e145dc46b7de96c69968a81f8eaeffca49fa6774bb4879f61c9f3",
+      "load_alignments": [
+        "0x4000",
+        "0x4000"
+      ],
+      "aligned_16k": true,
+      "gnu_relro": true,
+      "bind_now": true,
+      "needed": [
+        "liblog.so",
+        "libm.so",
+        "libdl.so",
+        "libc.so"
+      ],
+      "unresolved_needed": [],
+      "libstdcpp_needed": false
+    },
+    {
+      "name": "app/src/main/jniLibs/arm64-v8a/libsmartusb_jni.so",
+      "sha256": "09f4a4b3fd7e1a745f640988f6e32efa6bc759cc21540ab956f77e00cf55a0d7",
+      "load_alignments": [
+        "0x4000",
+        "0x4000",
+        "0x4000"
+      ],
+      "aligned_16k": true,
+      "gnu_relro": true,
+      "bind_now": true,
+      "needed": [
+        "liblog.so",
+        "libc.so",
+        "libm.so",
+        "libdl.so"
+      ],
+      "unresolved_needed": [],
+      "libstdcpp_needed": false
+    },
+    {
+      "name": "app/src/main/jniLibs/arm64-v8a/libusb.so",
+      "sha256": "a6f280c7c0c5034d64e602628fe9992c9678e58dc9ce0caf236507cbb9cd1e5c",
+      "load_alignments": [
+        "0x4000",
+        "0x4000",
+        "0x4000"
+      ],
+      "aligned_16k": true,
+      "gnu_relro": true,
+      "bind_now": true,
+      "needed": [
+        "libsmartusb_jni.so",
+        "liblog.so",
+        "libc.so",
+        "libm.so",
+        "libdl.so"
+      ],
+      "unresolved_needed": [],
+      "libstdcpp_needed": false
+    },
+    {
+      "name": "app/src/main/assets/Plugins/arm64-v8a/Balance.so",
+      "sha256": "96422655a31d8fc5c6c119bc32425f040171d655bb5a246c85104f717af4a296",
+      "load_alignments": [
+        "0x4000",
+        "0x4000",
+        "0x4000"
+      ],
+      "aligned_16k": true,
+      "gnu_relro": true,
+      "bind_now": true,
+      "needed": [
+        "libc.so",
+        "libm.so"
+      ],
+      "unresolved_needed": [],
+      "libstdcpp_needed": false
+    },
+    {
+      "name": "app/src/main/assets/Plugins/arm64-v8a/EFOSVirtualizer V1.86.so",
+      "sha256": "d53e084032c132a84b42d7856a6b1c3d196b57f2cca67ccffed21f6e13209093",
+      "load_alignments": [
+        "0x4000",
+        "0x4000",
+        "0x4000"
+      ],
+      "aligned_16k": true,
+      "gnu_relro": true,
+      "bind_now": true,
+      "needed": [
+        "libc.so",
+        "libm.so",
+        "libdl.so"
+      ],
+      "unresolved_needed": [],
+      "libstdcpp_needed": false
+    },
+    {
+      "name": "app/src/main/assets/Plugins/arm64-v8a/EFOSpatializer V1.62.so",
+      "sha256": "d78e105bcd6e51828a6193df647f408cc9092c4d58ec5b39a0a46137a6df84ac",
+      "load_alignments": [
+        "0x4000",
+        "0x4000",
+        "0x4000"
+      ],
+      "aligned_16k": true,
+      "gnu_relro": true,
+      "bind_now": true,
+      "needed": [
+        "libc.so",
+        "libm.so",
+        "libdl.so"
+      ],
+      "unresolved_needed": [],
+      "libstdcpp_needed": false
+    },
+    {
+      "name": "app/src/main/assets/Plugins/arm64-v8a/Sound Field.so",
+      "sha256": "1f8b83198bbdecb12d2f693e99ebfcd97f1f69259623efc46b943f8239b7c2e0",
+      "load_alignments": [
+        "0x4000",
+        "0x4000",
+        "0x4000"
+      ],
+      "aligned_16k": true,
+      "gnu_relro": true,
+      "bind_now": true,
+      "needed": [
+        "libc.so",
+        "libm.so"
+      ],
+      "unresolved_needed": [],
+      "libstdcpp_needed": false
+    }
+  ],
+  "legacy_payloads": [],
+  "failures": []
+}
