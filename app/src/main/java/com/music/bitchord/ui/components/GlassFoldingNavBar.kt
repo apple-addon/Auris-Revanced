@@ -1,0 +1,524 @@
+/**
+ * Convx Project (C) 2026
+ * Licensed under GPL-3.0 | See git history for contributors
+ *
+ * Ported from Convx AppFloatingNavBar/FloatingNavBar, adapted to BitChord's
+ * tab ints, Song model, transport and strings.
+ */
+
+@file:OptIn(ExperimentalSharedTransitionApi::class)
+
+package com.music.bitchord.ui.components
+
+import androidx.compose.animation.ExperimentalSharedTransitionApi
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Language
+import androidx.compose.material.icons.rounded.Album
+import androidx.compose.material.icons.rounded.LibraryMusic
+import androidx.compose.material.icons.rounded.MusicNote
+import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.music.bitchord.data.model.Song
+import com.music.bitchord.ui.SearchSource
+import com.music.bitchord.ui.components.backdrop.catalog.components.LocalLiquidBottomTabScale
+import com.music.bitchord.ui.components.backdrop.catalog.utils.InteractiveHighlight
+import com.music.bitchord.ui.components.foldingtabbar.FoldingTabBar
+import com.music.bitchord.ui.components.foldingtabbar.FoldingTabCell
+import com.music.bitchord.ui.components.foldingtabbar.FoldingTabGroup
+import com.music.bitchord.ui.components.foldingtabbar.FloatingTabBarDefaults
+import com.music.bitchord.ui.components.foldingtabbar.clipWhilePressed
+import com.music.bitchord.ui.components.floatingtabbar.FloatingTabBarScrollConnection
+import com.music.bitchord.ui.player.PlayerDock
+
+private val NavBarShape = RoundedCornerShape(percent = 50)
+private val NavBarSearchBarHeight = 48.dp
+private val NavBarRowHeight = 68.dp
+
+@Composable
+fun GlassFoldingNavBar(
+    tabs: List<BottomTab>,
+    selectedIndex: Int,
+    onTabSelected: (Int) -> Unit,
+    scrollConnection: FloatingTabBarScrollConnection,
+    search: NavSearchState,
+    placeholder: String,
+    song: Song?,
+    isPlaying: Boolean,
+    isLoading: Boolean,
+    onPlayPause: () -> Unit,
+    onNext: () -> Unit,
+    onPrevious: () -> Unit,
+    onExpand: () -> Unit,
+    controlsLocked: Boolean = false,
+    onBlockedControl: () -> Unit = {},
+    dock: PlayerDock? = null,
+    pull: MiniPlayerPull? = null,
+    modifier: Modifier = Modifier,
+) {
+    // Keep the whole chrome mounted while the keyboard opens. Replacing it
+    // used to remove the mini-player and restart every glass surface.
+    GlassFoldingNavBarChrome(
+        tabs = tabs,
+        selectedIndex = selectedIndex,
+        onTabSelected = onTabSelected,
+        scrollConnection = scrollConnection,
+        search = search,
+        placeholder = placeholder,
+        song = song,
+        isPlaying = isPlaying,
+        isLoading = isLoading,
+        onPlayPause = onPlayPause,
+        onNext = onNext,
+        onPrevious = onPrevious,
+        onExpand = onExpand,
+        controlsLocked = controlsLocked,
+        onBlockedControl = onBlockedControl,
+        dock = dock,
+        pull = pull,
+        modifier = modifier.fillMaxWidth(),
+    )
+}
+
+@Composable
+private fun GlassFoldingNavBarChrome(
+    tabs: List<BottomTab>,
+    selectedIndex: Int,
+    onTabSelected: (Int) -> Unit,
+    scrollConnection: FloatingTabBarScrollConnection,
+    search: NavSearchState,
+    placeholder: String,
+    song: Song?,
+    isPlaying: Boolean,
+    isLoading: Boolean,
+    onPlayPause: () -> Unit,
+    onNext: () -> Unit,
+    onPrevious: () -> Unit,
+    onExpand: () -> Unit,
+    controlsLocked: Boolean,
+    onBlockedControl: () -> Unit,
+    dock: PlayerDock?,
+    pull: MiniPlayerPull?,
+    modifier: Modifier,
+) {
+    val contentColor = glassContentColor()
+    // Selected tab is Apple's systemRed, not the glass ink — see GlassTintTokens.
+    val selectedColor = com.music.bitchord.ui.theme.GlassTintTokens.selectedRedColor(glassUsesDarkAppearance())
+    val unselectedColor = contentColor.copy(alpha = 0.65f)
+    val glassSurface: @Composable () -> Modifier = { Modifier.liquidGlass(shape = NavBarShape) }
+    val glassHaptic = rememberLiquidGlassHaptics()
+    val searchIndex = tabs.lastIndex
+
+    val playerAccessory: (@Composable (Modifier, Boolean) -> Unit)? =
+        song?.let { current ->
+            { accessoryModifier, isInline ->
+                GlassNowPlaying(
+                    song = current,
+                    isInline = isInline,
+                    isPlaying = isPlaying,
+                    isLoading = isLoading,
+                    contentColor = contentColor,
+                    onPlayPause = onPlayPause,
+                    onNext = onNext,
+                    onPrevious = onPrevious,
+                    onExpand = onExpand,
+                    controlsLocked = controlsLocked,
+                    onBlockedControl = onBlockedControl,
+                    dock = dock,
+                    pull = pull,
+                    modifier = accessoryModifier
+                        .fillMaxWidth()
+                        .then(glassSurface()),
+                )
+            }
+        }
+
+    val imeVisible = WindowInsets.ime.getBottom(LocalDensity.current) > 0
+    FoldingTabBar(
+        selectedTabKey = selectedIndex,
+        scrollConnection = scrollConnection,
+        rowHeight = NavBarRowHeight,
+        tabBarContentModifier = glassSurface(),
+        colors = FloatingTabBarDefaults.colors(
+            backgroundColor = Color.Transparent,
+            accessoryBackgroundColor = Color.Transparent,
+        ),
+        shapes = FloatingTabBarDefaults.shapes(
+            tabBarShape = NavBarShape,
+            accessoryShape = NavBarShape,
+        ),
+        sizes = FloatingTabBarDefaults.sizes(),
+        elevations = FloatingTabBarDefaults.elevations(
+            inlineElevation = 0.dp,
+            expandedElevation = 0.dp,
+        ),
+        modifier = modifier
+            // MainActivity owns the IME lift. While it is visible, keep only
+            // an 8 dp field-to-keyboard gap; never add the gesture inset too.
+            .then(
+                if (imeVisible) {
+                    Modifier.padding(bottom = 8.dp)
+                } else {
+                    Modifier.windowInsetsPadding(
+                        WindowInsets.navigationBars.union(WindowInsets(bottom = 15.dp)),
+                    )
+                },
+            )
+            .padding(horizontal = BAR_GUTTER)
+            .padding(bottom = 2.dp),
+        accessory = playerAccessory,
+        searchMode = search.visualActive,
+        searchBarContent = { contentModifier ->
+            if (search.keyboardActive) {
+                NavBarSearchInputBar(
+                    state = search,
+                    placeholder = placeholder,
+                    modifier = contentModifier,
+                )
+            } else {
+                SearchBarPlaceholder(
+                    state = search,
+                    placeholder = placeholder,
+                    contentColor = contentColor,
+                    modifier = contentModifier,
+                )
+            }
+        },
+        expandedTabs = { foldingTabs, surfaceBackdrop ->
+            // FoldingTabGroup samples this lambda from a LaunchedEffect started
+            // once, so a plain closure would keep the first composition's tab
+            // forever — the crystal stayed put while navigation changed.
+            val selected by rememberUpdatedState(
+                foldingTabs.indexOfFirst { it.key == selectedIndex }.coerceAtLeast(0),
+            )
+            FoldingTabGroup(
+                selectedTabIndex = { selected },
+                onTabSelected = { index ->
+                    glassHaptic()
+                    foldingTabs.getOrNull(index)?.onClick?.invoke()
+                },
+                backdrop = LocalAppBackdrop.current,
+                surfaceBackdrop = surfaceBackdrop,
+                tabsCount = foldingTabs.size,
+                accentColor = selectedColor,
+                containerColor = Color.Transparent,
+                height = NavBarRowHeight,
+                indicatorVisible = true,
+            ) {
+                foldingTabs.forEach { tab ->
+                    FoldingTabCell(onClick = tab.onClick, onLongClick = null) {
+                        tab.icon()
+                        tab.title()
+                    }
+                }
+            }
+        },
+    ) {
+        // Five tabs (Home / Explore / Radio / Library / Search) each get less
+        // width than the four-tab bar was drawn for. Trim the glyph and label a
+        // hair so the labels keep clear of their neighbours instead of
+        // ellipsising "Library" on a narrow phone.
+        val dense = tabs.size > 4
+        tabs.forEachIndexed { index, tab ->
+            val isSelected = index == selectedIndex
+            tab(
+                key = index,
+                title = {
+                    Text(
+                        text = tab.label,
+                        color = if (isSelected) selectedColor else unselectedColor,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        fontSize = if (dense) 9.5.sp else 10.sp,
+                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Medium,
+                    )
+                },
+                icon = {
+                    Icon(
+                        imageVector = tab.icon,
+                        contentDescription = tab.label,
+                        tint = if (isSelected) selectedColor else unselectedColor,
+                        modifier = Modifier.size(if (dense) 26.dp else 28.dp),
+                    )
+                },
+                onClick = {
+                    glassHaptic()
+                    when {
+                        index == searchIndex ->
+                            if (search.visualActive) search.onTapBar() else search.onTapSearchIcon()
+                        search.visualActive -> {
+                            search.onExit()
+                            onTabSelected(index)
+                        }
+                        else -> onTabSelected(index)
+                    }
+                },
+            )
+        }
+    }
+}
+
+@Composable
+private fun SearchBarPlaceholder(
+    state: NavSearchState,
+    placeholder: String,
+    contentColor: Color,
+    modifier: Modifier,
+) {
+    val glowScope = rememberCoroutineScope()
+    val glow = remember(glowScope) { InteractiveHighlight(animationScope = glowScope) }
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = modifier
+            .clipWhilePressed(glow, NavBarShape)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = state.onTapBar,
+            )
+            .padding(start = 4.dp, end = 4.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(40.dp)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = state.onExit,
+                )
+                .padding(8.dp),
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.ArrowBack,
+                contentDescription = null,
+                tint = contentColor,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+        Box(Modifier.weight(1f)) {
+            if (state.query.isNotEmpty()) {
+                Text(
+                    text = state.query,
+                    // Built from the theme's body style rather than a bare TextStyle:
+                    // a bare one carries no fontFamily and falls back to Roboto.
+                    style = MaterialTheme.typography.bodyLarge.copy(
+                        color = contentColor,
+                        fontSize = 17.sp,
+                    ),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            } else {
+                Text(
+                    text = placeholder,
+                    style = MaterialTheme.typography.bodyLarge.copy(
+                        color = contentColor.copy(alpha = 0.6f),
+                        fontSize = 17.sp,
+                    ),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        if (state.canToggleSource) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = state.onToggleSource,
+                    )
+                    .padding(9.dp),
+            ) {
+                Icon(
+                    imageVector = when (state.searchSource) {
+                        SearchSource.LIBRARY -> Icons.Rounded.LibraryMusic
+                        SearchSource.SPOTIFY -> Icons.Rounded.MusicNote
+                        SearchSource.APPLE -> Icons.Rounded.Album
+                        SearchSource.YOUTUBE -> Icons.Rounded.Language
+                    },
+                    contentDescription = null,
+                    tint = contentColor,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun NavBarSearchInputBar(
+    state: NavSearchState,
+    placeholder: String,
+    modifier: Modifier,
+) {
+    val contentColor = glassContentColor()
+    val focusManager = LocalFocusManager.current
+    val keyboardController = LocalSoftwareKeyboardController.current
+    LaunchedEffect(state.focusRequester) {
+        state.focusRequester.requestFocus()
+    }
+
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = modifier
+            .padding(horizontal = 16.dp)
+            .padding(top = 6.dp)
+            .height(NavBarSearchBarHeight)
+            .clip(NavBarShape)
+            .liquidGlass(shape = NavBarShape)
+            .padding(start = 11.dp, end = 10.dp),
+    ) {
+        Box(
+            modifier = Modifier
+                .size(48.dp)
+                .clickable(
+                    interactionSource = remember { MutableInteractionSource() },
+                    indication = null,
+                    onClick = state.onExit,
+                )
+                .padding(12.dp),
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.ArrowBack,
+                contentDescription = null,
+                tint = contentColor,
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
+        Box(modifier = Modifier.weight(1f)) {
+            if (state.query.isEmpty()) {
+                Text(
+                    text = placeholder,
+                    style = MaterialTheme.typography.bodyLarge.copy(
+                        color = contentColor.copy(alpha = 0.6f),
+                        fontSize = 17.sp,
+                    ),
+                    maxLines = 1,
+                )
+            }
+            BasicTextField(
+                value = state.textValue,
+                onValueChange = state.onTextValueChange,
+                singleLine = true,
+                textStyle = MaterialTheme.typography.bodyLarge.copy(
+                    color = contentColor,
+                    fontSize = 17.sp,
+                ),
+                cursorBrush = SolidColor(contentColor),
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(
+                    onSearch = { submitSearch(state, focusManager, keyboardController) },
+                    onDone = { submitSearch(state, focusManager, keyboardController) },
+                    onGo = { submitSearch(state, focusManager, keyboardController) },
+                ),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .onFocusChanged {
+                        if (it.isFocused && !state.keyboardActive) state.onTapBar()
+                    }
+                    .focusRequester(state.focusRequester),
+            )
+        }
+        if (state.query.isNotEmpty()) {
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = { state.onQueryChange("") },
+                    )
+                    .padding(12.dp),
+            ) {
+                Icon(
+                    imageVector = Icons.Rounded.Close,
+                    contentDescription = null,
+                    tint = contentColor,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+        }
+        if (state.canToggleSource) {
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clickable(
+                        interactionSource = remember { MutableInteractionSource() },
+                        indication = null,
+                        onClick = state.onToggleSource,
+                    )
+                    .padding(12.dp),
+            ) {
+                Icon(
+                    imageVector = when (state.searchSource) {
+                        SearchSource.LIBRARY -> Icons.Rounded.LibraryMusic
+                        SearchSource.SPOTIFY -> Icons.Rounded.MusicNote
+                        SearchSource.APPLE -> Icons.Rounded.Album
+                        SearchSource.YOUTUBE -> Icons.Rounded.Language
+                    },
+                    contentDescription = null,
+                    tint = contentColor,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            }
+        }
+    }
+}
+
+private fun submitSearch(
+    state: NavSearchState,
+    focusManager: androidx.compose.ui.focus.FocusManager,
+    keyboardController: androidx.compose.ui.platform.SoftwareKeyboardController?,
+) {
+    focusManager.clearFocus()
+    keyboardController?.hide()
+    state.onSubmit()
+}

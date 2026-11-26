@@ -1,0 +1,960 @@
+package com.music.bitchord.data.model
+
+import kotlin.math.roundToInt
+
+/** Tier of an item in the playback queue. */
+enum class QueueTier {
+    /** Explicitly queued by user ("Play Next", "Add to Queue", or preserved user queue). */
+    USER_QUEUE,
+    /** Part of the active Album, Playlist, or Artist collection context. */
+    CONTEXT,
+    /** Dynamically generated radio recommendations appended when context/user queue ends. */
+    AUTOPLAY,
+}
+
+/**
+ * One credited artist, as YouTube Music itself states them.
+ *
+ * @property browseId The artist's own channel, so their page is the one that
+ * opens. Null for the rare run that names an artist without linking one.
+ */
+data class ArtistRef(
+    val name: String,
+    val browseId: String? = null,
+)
+
+/** A playable YouTube Music track. */
+/**
+ * How much of a track YouTube says was generated with AI.
+ *
+ * The disclosure is not a normal catalogue field; it arrives as a player
+ * overlay action or a row badge. [UNKNOWN] is kept separate from [NONE] so
+ * callers can tell "said nothing" from "said nothing in particular" without
+ * guessing — strict filtering treats both as not labelled.
+ */
+enum class GenAiDisclosure { NONE, PARTLY, FULLY, UNKNOWN }
+
+data class Song(    val videoId: String,
+    val title: String,
+    val artist: String,
+    val thumbnailUrl: String?,
+    val durationText: String? = null,
+    /** Publish date as the feed stated it (podcast episodes / audiobook chapters). */
+    val publishedDate: String? = null,
+    /** Browse ids lifted from the row, used by the long-press actions. */
+    val artistId: String? = null,
+    /**
+     * Every credited artist, each with their own channel, where the row said so.
+     *
+     * [artistId] is the lead's and nothing else, which is why a collaboration
+     * could only ever be opened at its first name. A track's byline carries one
+     * navigation endpoint per artist, so the rest of them are here rather than
+     * left in the response — and because a name is not an identity, this is the
+     * only thing that can open the right page for the second and third credit.
+     *
+     * Empty on rows that state no per-artist links, which is most home cards
+     * and anything read before its watch-queue entry has been looked up.
+     */
+    val artists: List<ArtistRef> = emptyList(),
+    val albumId: String? = null,
+    /** Names the album page header, which [albumId] alone can't. */
+    val albumName: String? = null,
+    /** A music-video upload rather than the catalogue track. */
+    val isVideo: Boolean = false,
+    /**
+     * True for a video upload, and false for a catalogue track.
+     *
+     * Playback policies use this to decide what they can do with a track:
+     * AutoMix declines a video because there is no beat analysis to plan a
+     * transition from, and a catalogue track has one. A video that has been
+     * converted to its catalogue match is a catalogue track from then on, so
+     * the flag is cleared on the way in — a converted track plays in the mix
+     * like any other music track.
+     */
+    val isVideoOrigin: Boolean = isVideo,
+    /**
+     * This track's identity *within one playlist*, which is not its [videoId]:
+     * the same song added twice is two entries with two set-video-ids, and
+     * removing one of them is only expressible in those terms. Present only on
+     * rows parsed from a playlist page, which is the only place a removal can
+     * be asked for from.
+     */
+    val setVideoId: String? = null,
+    /** Which queue tier this track belongs to in the playback timeline. */
+    val queueTier: QueueTier = QueueTier.CONTEXT,
+    /**
+     * Unique, strictly immutable queue-entry identity assigned when this track
+     * enters the player's queue in QueueCoordinator. Preserved across all stream transformations
+     * and persistence.
+     */
+    val queueEntryId: String? = null,
+    /**
+     * The seed title of an explicitly started radio queue. Every item in that
+     * queue carries the same value, so the player can keep naming the station
+     * across skips and queue edits without holding UI-only session state.
+     */
+    val radioName: String? = null,
+    /**
+     * Explicit content or file URI for local device tracks or downloaded audio.
+     */
+    val localUri: String? = null,
+    /** A premium rendition marker recorded by BitChord for its Downloads list. */
+    val downloadFormat: String? = null,
+    /**
+     * Real filesystem path backing [localUri], when MediaStore exposes one.
+     * Lets playback swap a content:// row for a raw file:// path on formats
+     * that need it — see [com.music.bitchord.playback.toMediaItem].
+     */
+    val localPath: String? = null,
+    /** MediaStore timestamps used only to sort device and downloaded libraries. */
+    val localDateAddedSeconds: Long? = null,
+    val localDateModifiedSeconds: Long? = null,
+    /**
+     * What a non-YouTube source says it can serve this recording at, as one of
+     * `LOSSLESS`, `HIGH` or `LOW` — null for every row that didn't come from
+     * one.
+     *
+     * Carried on the row rather than discovered at stream time because it is
+     * the only thing that distinguishes two catalogues holding the same track,
+     * and the choice between them has to be made *before* either is asked for
+     * a URL. Without it the picker was blind: a Deezer row and a 16-bit FLAC
+     * row looked identical, the FLAC lost a tie-break on artist spelling, and
+     * the track played as a 128kbps MP3.
+     */
+    val sourceQuality: String? = null,
+    /** Explicit-content state from the catalogue; null when that source does not say. */
+    val isExplicit: Boolean? = null,
+    /**
+     * The page, collection, or feed section that put this track in the queue.
+     *
+     * This is deliberately separate from [albumName]: a song can belong to an
+     * album while it was actually played from Search, History, a playlist, or
+     * a recommendation shelf. Kept on every queue item so Now Playing can name
+     * that origin after skips and after the playback service restores a queue.
+     */
+    val playbackSource: String? = null,
+    /** Where tapping [playbackSource] should return in the app. */
+    val playbackSourceType: PlaybackSourceType? = null,
+    /** Browse id for an album, playlist, or other source page. */
+    val playbackSourceId: String? = null,
+    /**
+     * YouTube's own Gen AI disclosure for this track, where the response said
+     * one. NONE is also the answer for "not stated"; the app never infers it
+     * from an artist name, title or genre.
+     */
+    val genAi: GenAiDisclosure = GenAiDisclosure.NONE,
+    /**
+     * Whether this recording has a Dolby Atmos mix in the catalogue.
+     *
+     * Carried on the row because the player needs to know whether the
+     * "switch to Atmos" cue belongs on this track at all, and that can only be
+     * answered by the catalogue the row came from — the audio flavour is a
+     * property of the master, not of the device playing it.
+     */
+    val atmosAvailable: Boolean = false,
+    /**
+     * Whether this recording has a Hi-Res lossless master (96/192 kHz).
+     *
+     * The ordinary lossless rung is 44.1/48 kHz; the Hi-Res rung is the same
+     * recording at a higher sample rate, and only some masters have one. A
+     * row that says nothing is asked for the standard rung.
+     */
+    val hiResAvailable: Boolean = false,
+    /**
+     * The stream to play, when the row is a live stream rather than a track
+     * the app has to look up.
+     *
+     * Apple's live radio is one continuous encrypted HLS stream, not a song:
+     * its playlist is known before anything is played and there is nothing to
+     * resolve, so the row carries its own address. Null on every ordinary
+     * track.
+     */
+    val liveStreamUrl: String? = null,
+    /**
+     * Where the device trades its Widevine challenge for the live stream's
+     * license. Null on every row that is not a live stream.
+     */
+    val liveLicenseUrl: String? = null,
+    /**
+     * The recording's ISRC, where the row's catalogue states one.
+     *
+     * The only identity that survives a change of provider: Apple, Spotify
+     * and the addons number their own rows, but the ISRC names the recording
+     * itself. A cross-source fallback compares it before any title.
+     */
+    val isrc: String? = null,
+    /** Apple's own library-added timestamp in epoch milliseconds, when supplied. */
+    val catalogueDateAddedMs: Long? = null,
+) {
+    /** Legacy derived property: true if and only if [queueTier] is [QueueTier.AUTOPLAY]. */
+    val fromAutoplay: Boolean get() = queueTier == QueueTier.AUTOPLAY
+
+    /** Backward-compatibility constructor for callers passing legacy [fromAutoplay]. */
+    constructor(
+        videoId: String,
+        title: String,
+        artist: String,
+        thumbnailUrl: String?,
+        durationText: String? = null,
+        artistId: String? = null,
+        artists: List<ArtistRef> = emptyList(),
+        albumId: String? = null,
+        albumName: String? = null,
+        isVideo: Boolean = false,
+        isVideoOrigin: Boolean = isVideo,
+        setVideoId: String? = null,
+        fromAutoplay: Boolean,
+        radioName: String? = null,
+        localUri: String? = null,
+        downloadFormat: String? = null,
+        localPath: String? = null,
+        localDateAddedSeconds: Long? = null,
+        localDateModifiedSeconds: Long? = null,
+        sourceQuality: String? = null,
+        isExplicit: Boolean? = null,
+        playbackSource: String? = null,
+        playbackSourceType: PlaybackSourceType? = null,
+        playbackSourceId: String? = null,
+        atmosAvailable: Boolean = false,
+        hiResAvailable: Boolean = false,
+    ) : this(
+        videoId = videoId,
+        title = title,
+        artist = artist,
+        thumbnailUrl = thumbnailUrl,
+        durationText = durationText,
+        artistId = artistId,
+        artists = artists,
+        albumId = albumId,
+        albumName = albumName,
+        isVideo = isVideo,
+        isVideoOrigin = isVideoOrigin,
+        setVideoId = setVideoId,
+        queueTier = if (fromAutoplay) QueueTier.AUTOPLAY else QueueTier.CONTEXT,
+        queueEntryId = null,
+        radioName = radioName,
+        localUri = localUri,
+        downloadFormat = downloadFormat,
+        localPath = localPath,
+        localDateAddedSeconds = localDateAddedSeconds,
+        localDateModifiedSeconds = localDateModifiedSeconds,
+        sourceQuality = sourceQuality,
+        isExplicit = isExplicit,
+        playbackSource = playbackSource,
+        playbackSourceType = playbackSourceType,
+        playbackSourceId = playbackSourceId,
+        atmosAvailable = atmosAvailable,
+        hiResAvailable = hiResAvailable,
+    )
+}
+
+/**
+ * Artwork at a given pixel size.
+ *
+ * YouTube serves every size from one URL via a `w<n>-h<n>` hint, so the size
+ * an image is fetched at is the caller's to choose, and worth choosing in both
+ * directions. Up: the size YouTube advertises is far short of what a
+ * full-screen player draws, and the source images run to about 1400px, so
+ * asking for more is free and sharper. Down: a row thumbnail left at the
+ * advertised size costs an order of magnitude more bytes than the square it
+ * fills — 84kB against 7.8kB, measured on the same cover.
+ *
+ * Video thumbnails carry no hint and are returned unchanged.
+ */
+fun Song.artworkAt(px: Int): String? = thumbnailUrl.artworkAt(px)
+
+/**
+ * Whether a row is the track the player is on, for the now-playing highlight.
+ *
+ * Title and credit, matched exactly, and nothing else. Every id a row could be
+ * matched on instead is scoped to where the row came from and so lies when
+ * asked across that boundary: a set-video-id names a slot in one playlist, and
+ * two playlists hand the same one to unrelated tracks, which is what used to
+ * light up a stranger's row while something else played. A video id is no
+ * better across catalogues — the same recording arrives with a different id
+ * from a local file, a download and a module source, and the highlight would
+ * simply go missing.
+ *
+ * The cost is that name and credit are not unique: an album track and its
+ * appearance on a compilation are one and the same to this, and both light up.
+ * That is the trade the highlight is meant to make — it says "this is the song
+ * you are hearing", not "this is the queue entry you are hearing".
+ *
+ * The one place that must not use this is the player's own queue, where the
+ * entry, not the song, is what the row stands for — that list matches on
+ * position.
+ */
+fun Song.isSameTrackAs(other: Song?): Boolean {
+    other ?: return false
+    return title == other.title && artist == other.artist
+}
+
+/**
+ * [Song.durationText] in milliseconds, or 0 when the row didn't state one.
+ *
+ * A row's duration is a display string — YouTube sends `"3:45"`, not a
+ * number — and anything that has to *reason* about the length rather than draw
+ * it needs it back as a quantity. Lyrics matching is the case that forced this
+ * out into the open: LRCLIB keys its exact lookup on the track's length, and
+ * falls back to whichever fuzzy hit is closest to it, so a duration of zero
+ * doesn't miss — it silently matches the shortest edit of the song in the
+ * database and hands back timings for a different recording.
+ *
+ * Zero is the answer for anything that isn't a duration, including null, so a
+ * caller has one thing to check rather than a nullable *and* a range.
+ */
+fun Song.durationMillis(): Long = durationText.durationMillis()
+
+/** As [Song.durationMillis], for a `M:SS` or `H:MM:SS` string on its own. */
+fun String?.durationMillis(): Long {
+    val parts = this?.trim()?.takeIf { it.isNotEmpty() }?.split(":") ?: return 0L
+    val numbers = parts.map { it.trim().toLongOrNull() ?: return 0L }
+    val seconds = when (numbers.size) {
+        2 -> numbers[0] * 60 + numbers[1]
+        3 -> numbers[0] * 3_600 + numbers[1] * 60 + numbers[2]
+        else -> return 0L
+    }
+    return (seconds * 1_000).coerceAtLeast(0L)
+}
+
+/** As [Song.artworkAt], for artwork that isn't a track's. */
+fun String?.artworkAt(px: Int): String? = this?.replace(SIZE_HINT, "w$px-h$px")
+
+private val SIZE_HINT = Regex("""w\d+-h\d+""")
+
+/**
+ * Artwork for a list row — 52dp at most, so about 140px on a 3x screen.
+ * Rounded up, and one value for every row in the app rather than one per
+ * row height, so they share a cache entry instead of each fetching its own.
+ */
+const val ROW_ART_PX = 160
+
+/** Artwork for a shelf card: 166dp wide, so a little under 450px at 3x. */
+const val CARD_ART_PX = 480
+
+/** Artwork for a page header, drawn near enough full width. */
+const val HEADER_ART_PX = 720
+
+/**
+ * Artwork handed to the media session — the lock screen, the notification,
+ * Android Auto. Generous because those surfaces draw it large and take one
+ * copy: unlike a list row, nothing goes back for a better one later.
+ */
+const val NOTIFICATION_ART_PX = 544
+
+/**
+ * Artwork for the full player — the sleeve and the full-bleed banner both, and
+ * the largest rung on the ladder.
+ *
+ * Named here rather than left as a private constant in the player because the
+ * home-screen widget picks its own size off this ladder, and a size only one
+ * surface asks for is a cache entry only that surface fills. A large widget and
+ * an open player were fetching the same cover twice at two sizes, and either
+ * fetch could fail on its own — so the two could disagree about whether the
+ * track had artwork at all.
+ */
+const val PLAYER_ART_PX = 1200
+
+/**
+ * The smallest copy of the player's artwork worth asking for.
+ *
+ * A window narrower than this would be served a copy bigger than it can show,
+ * which costs bytes and decode time for pixels nobody sees. This is the floor
+ * under that.
+ */
+const val MIN_PLAYER_ART_PX = 640
+
+/**
+ * The player's artwork size in pixels: the width of the window the player is
+ * drawn in, capped at the largest rung on the ladder.
+ *
+ * The sleeve and the banner are the picture edge to edge, so the window's own
+ * width is what the artwork has to cover — and nothing past it is ever on
+ * screen. Asking for the window's size rather than the largest rung is what
+ * stops the player from decoding a cover several times the size of the screen
+ * it is drawn on: a 1200px cover on a 720px-wide phone is 2MB of bitmap for
+ * pixels that are never shown, and it is the decode and the upload of that
+ * bitmap that makes a cover's arrival jank the player.
+ */
+fun playerArtPx(windowWidthDp: Float, density: Float): Int {
+    val px = (windowWidthDp * density).roundToInt()
+    return px.coerceIn(MIN_PLAYER_ART_PX, PLAYER_ART_PX)
+}
+
+enum class BrowseType { ALBUM, ARTIST, PLAYLIST, PODCAST, OTHER }
+
+/** A queue-level origin shown above Now Playing, in the style of Spotify. */
+enum class PlaybackSourceType {
+    HOME,
+    SEARCH,
+    HISTORY,
+    REPLAY,
+    EXPLORE,
+    BROWSE,
+    SHARED_LINK,
+    QUEUE,
+    /** A radio station — Apple's own, or any other catalogue's. */
+    RADIO,
+    /** A row of the listener's own library. */
+    LIBRARY,
+}
+
+/** A non-track search result: album, artist or playlist. */
+data class BrowseItem(
+    val browseId: String,
+    val title: String,
+    val subtitle: String,
+    val thumbnailUrl: String?,
+    val type: BrowseType,
+)
+
+/** Search rows are heterogeneous once filters other than "Songs" are used. */
+sealed interface SearchResult {
+    /** The promoted card returned only at the head of an unfiltered search. */
+    data class TopTrack(val song: Song) : SearchResult
+    data class Track(val song: Song) : SearchResult
+    data class Browse(val item: BrowseItem) : SearchResult
+}
+
+/** The song carried by a search row, whether it is promoted or ordinary. */
+fun SearchResult.songOrNull(): Song? = when (this) {
+    is SearchResult.TopTrack -> song
+    is SearchResult.Track -> song
+    is SearchResult.Browse -> null
+}
+
+enum class SearchFilter(val label: String, val params: String?) {
+    /** YouTube Music's mixed search page: songs, artists, albums and playlists. */
+    ALL("All", null),
+    SONGS("Songs", "EgWKAQIIAWoKEAkQChAFEAMQBA=="),
+    VIDEOS("Videos", "EgWKAQIQAWoKEAkQChAFEAMQBA=="),
+    ALBUMS("Albums", "EgWKAQIYAWoKEAkQChAFEAMQBA=="),
+    ARTISTS("Artists", "EgWKAQIgAWoKEAkQChAFEAMQBA=="),
+    PLAYLISTS("Playlists", "EgWKAQIoAWoKEAkQChAFEAMQBA=="),
+    /** Not a YouTube filter — searched against the Apple podcast catalogue instead. */
+    PODCASTS("Podcasts", null),
+}
+
+/** A catalogue card: a track, an in-app page, or Apple-hosted media. */
+data class ShelfItem(
+    val title: String,
+    val subtitle: String,
+    val thumbnailUrl: String?,
+    val videoId: String?,
+    val browseId: String?,
+    /**
+     * The year the release came out, when the catalogue states one.
+     *
+     * Only Spotify's release cards carry it so far; a YouTube card keeps it
+     * null and the shelf sorter falls back to the catalogue's own order.
+     */
+    val year: Int? = null,
+    /**
+     * Where the card sat in the catalogue's own popularity ranking, when it
+     * gave one — smaller is more popular. Null for every card whose order is
+     * not a statement about popularity.
+     */
+    val popularity: Int? = null,
+    /** Apple's own destination for media this app cannot play directly. */
+    val externalUrl: String? = null,
+    /** Portrait editorial artwork and the copy Apple prints over a feature card. */
+    val heroArtworkUrl: String? = null,
+    val badge: String = "",
+    val description: String = "",
+    /** A station plays directly; other catalogue cards open [browseId]. */
+    val stationId: String? = null,
+    val isLive: Boolean = false,
+    /** Upstream resource type, used for video and editorial presentation. */
+    val editorialType: String = "",
+    /** Apple's own feature-card copy and footer, without synthesising either. */
+    val heroKind: String = "",
+    val designTag: String = "",
+    val footerTitle: String = "",
+    val footerArtworkUrl: String? = null,
+    /** Apple's own library-added timestamp, when this is a library row. */
+    val dateAdded: String? = null,
+)
+
+/** A typed Apple page opened inside the app, never inferred from a label. */
+data class AppleEditorialDestination(
+    val kind: String,
+    val id: String = "",
+    val popId: String = "",
+    val geo: String = "",
+    val route: String = "browse/destination",
+    /** "new" or "radio": which of Apple's layouts the destination came from. */
+    val presentation: String = "new",
+)
+
+/** A real destination from Apple's More to Explore editorial element. */
+data class AppleEditorialLink(
+    val label: String,
+    val url: String,
+    val target: String = "",
+    val destination: AppleEditorialDestination? = null,
+)
+
+/**
+ * One ordered child of Apple's New or Radio grouping.
+ *
+ * [kind] and [displayStyle] are upstream's own controller hints. Empty items
+ * are meaningful: Apple retains an empty Local Broadcasters heading too.
+ */
+data class AppleEditorialElement(
+    val id: String,
+    val kind: String,
+    val displayStyle: String,
+    val title: String,
+    val items: List<ShelfItem> = emptyList(),
+    val links: List<AppleEditorialLink> = emptyList(),
+    /** Apple's full chart id order, including ids with no preview lockup. */
+    val itemIds: List<String> = emptyList(),
+    val destination: AppleEditorialDestination? = null,
+)
+
+/**
+ * One row of Apple's Radio page.
+ *
+ * A station or a playlist: Apple's page carries both, and the row says which
+ * it is.
+ */
+data class AppleRadioRow(
+    val id: String,
+    val name: String,
+    /** "stations" or "playlists": what the row opens. */
+    val kind: String = "stations",
+    val isLive: Boolean = false,
+    val subtitle: String? = null,
+    val artworkUrl: String? = null,
+    val provider: String? = null,
+    /** The page the row opens, when it is a page rather than a station. */
+    val browseId: String? = null,
+)
+
+/**
+ * One section of Apple's Radio page: the stations by genre, the sessions,
+ * the mixes, the interviews, the shows.
+ */
+data class AppleRadioShelf(
+    val title: String,
+    val items: List<AppleRadioRow> = emptyList(),
+)
+
+/** One real concert from Apple's location-based hub. */
+data class AppleConcertEvent(
+    val id: String,
+    val name: String,
+    val startIso: String = "",
+    val endIso: String = "",
+    val timezone: String = "",
+    val artistName: String = "",
+    val artworkUrl: String? = null,
+    val venueName: String = "",
+    val address: String = "",
+    val ticketVendor: String = "",
+    val ticketUrl: String? = null,
+)
+
+data class AppleConcertContainer(
+    val id: String,
+    val title: String,
+    val href: String? = null,
+    val events: List<AppleConcertEvent> = emptyList(),
+)
+
+data class AppleConcertHub(
+    val locationRequired: Boolean,
+    val geoHashLocation: String? = null,
+    val containers: List<AppleConcertContainer> = emptyList(),
+)
+
+/**
+ * Apple's Library landing page: category navigation followed by one mixed,
+ * chronologically ordered Recently Added grid of the listener's albums and
+ * playlists. The four categories open complete pages of their own.
+ */
+data class AppleLibraryContent(
+    val recentlyAdded: List<ShelfItem> = emptyList(),
+)
+
+/** The signed-in Google account, as YouTube Music reports it. */
+data class Account(
+    val name: String,
+    val email: String,
+    val thumbnailUrl: String?,
+)
+
+/**
+ * One identity the signed-in session can act as: the Google account's own
+ * channel, plus any brand channel it owns.
+ *
+ * A brand channel is a separate YouTube identity attached to the same login,
+ * and YouTube Music treats it as a separate listener — its own library, likes,
+ * history and recommendations. Nothing in the cookie says which one is meant,
+ * so a client that never asks gets whichever one the web player happens to
+ * default to, which is why a listener whose music lives on a brand channel
+ * signs in and is shown a stranger's account.
+ *
+ * @param pageId `X-Goog-PageId`. Null for the account's own channel, which is
+ *   not a delegated page and must not be given one.
+ * @param dataSyncId `context.user.onBehalfOfUser`, taken from the switcher's
+ *   `datasyncIdToken` — never guessed, since Google answers one it cannot tie
+ *   to the session with 401.
+ */
+data class AccountChannel(
+    val name: String,
+    val subtitle: String,
+    val thumbnailUrl: String?,
+    val pageId: String?,
+    val dataSyncId: String?,
+    /** Whether YouTube's own switcher marks this as the session's active one. */
+    val activeOnWeb: Boolean,
+) {
+    /** Identity of the selection, stable across refetches of the list. */
+    val key: String get() = pageId ?: dataSyncId ?: name
+}
+
+data class HomeShelf(
+    val title: String,
+    val items: List<ShelfItem>,
+    /** YouTube's "strapline" — the grey line Apple Music runs under a heading. */
+    val subtitle: String = "",
+    val moreBrowseId: String? = null,
+    val moreParams: String? = null,
+    /** Apple's own presentation hint; empty for an ordinary horizontal shelf. */
+    val layout: String = "",
+)
+
+/**
+ * What a home page says above its shelves.
+ *
+ * A list of shelves is enough for a page of rows, and that is all YouTube's
+ * home has ever needed. Spotify's own home is not that: it opens with a
+ * greeting, a row of chips the page can be narrowed by, and a grid of quick
+ * access tiles before the shelves begin.
+ *
+ * None of that is carried inside a shelf, because none of it is a shelf: the
+ * greeting belongs to the page, the chips belong to the page, and the tiles
+ * are a grid rather than a row. Putting them in a shelf and giving the shelf
+ * an empty title would draw a heading over nothing and make the page's
+ * structure a thing every reader has to decode.
+ */
+data class HomeHeader(
+    /** "Good evening", or whatever the provider says. */
+    val greeting: String? = null,
+    /** The quick-access grid at the top of the page. */
+    val shortcuts: List<ShelfItem> = emptyList(),
+    /** The chips the page can be narrowed by. */
+    val chips: List<HomeChip> = emptyList(),
+    /** The chip in force, or "" for the whole page. */
+    val chip: String = "",
+)
+
+/** One chip on a home page, and the chips that open beside it. */
+data class HomeChip(
+    /** The provider's own id for it, sent back when it is picked. */
+    val id: String,
+    val label: String,
+    val subChips: List<HomeChip> = emptyList(),
+)
+
+/**
+ * These shelves minus any that mostly repeat one already on the page, or one earlier in this
+ * batch. YouTube serves the same new releases from FEmusic_new_releases ("Albums & singles") and
+ * FEmusic_explore ("New albums & singles"), lightly reordered under a different heading, so a
+ * title check alone lets both through.
+ *
+ * Only browsable items (albums, playlists, artists) are compared. Song shelves overlap on
+ * purpose: Recents and YouTube's own "Listen again" share tracks but rank them differently.
+ */
+fun List<HomeShelf>.withoutRepeatsOf(existing: List<HomeShelf>): List<HomeShelf> {
+    val shown = existing.toMutableList()
+    return filter { shelf ->
+        val keys = shelf.browseKeys()
+        val repeat = keys.isNotEmpty() && shown.any { other ->
+            val shared = other.browseKeys().count { it in keys }
+            shared > 0 && shared >= REPEAT_SHELF_SHARE * minOf(shelf.items.size, other.items.size)
+        }
+        if (!repeat) shown += shelf
+        !repeat
+    }
+}
+
+/** Share of the smaller shelf's items both must hold for one to count as a repeat of the other. */
+private const val REPEAT_SHELF_SHARE = 0.6
+
+private fun HomeShelf.browseKeys(): Set<String> = items.mapNotNullTo(HashSet()) { it.browseId }
+
+/** A page of the Home feed, plus the token for the next one — null once exhausted. */
+data class HomeFeed(
+    val shelves: List<HomeShelf>,
+    val continuation: String?,
+)
+
+/** One server-defined group of the buttons shown on Explore. */
+data class MoodGenreSection(
+    val title: String,
+    val items: List<MoodGenre>,
+)
+
+/** A mood or genre button and the exact browse request that it represents. */
+data class MoodGenre(
+    val title: String,
+    val browseId: String,
+    val params: String?,
+    /** First real cover from the category's playlist shelves, loaded in the background. */
+    val thumbnailUrl: String? = null,
+    /** YouTube Music's own stripe colour for the button, as ARGB; null when the button carries none. */
+    val stripeColor: Long? = null,
+)
+
+/**
+ * The signed-in library, as YouTube Music splits it: the auto-generated Liked
+ * Music playlist, the tracks explicitly added to the library, and a shelf per
+ * saved collection (playlists, albums, artists, subscriptions, podcasts).
+ */
+data class LibraryPage(
+    val likedSongs: List<Song>,
+    val librarySongs: List<Song>,
+    val shelves: List<HomeShelf>,
+    /**
+     * The continuation token behind [likedSongs]' first page, when Liked Music
+     * has more tracks than that one page held. Consumed by whoever owns the
+     * library's lifecycle to finish syncing the liked collection into
+     * [com.music.bitchord.data.LikeState]; never stored as page state.
+     */
+    val likedContinuation: String? = null,
+) {
+    val isEmpty: Boolean
+        get() = likedSongs.isEmpty() && librarySongs.isEmpty() && shelves.isEmpty()
+}
+
+/** A feature card above an editorial page's ordinary shelves. */
+data class EditorialHero(
+    val item: ShelfItem,
+    val badge: String = "",
+    val description: String = "",
+)
+
+/** A browsed album / artist / playlist page. */
+data class DetailPage(
+    val browseId: String,
+    val title: String,
+    val subtitle: String,
+    val thumbnailUrl: String?,
+    val songs: UiState<List<Song>>,
+    val type: BrowseType = BrowseType.OTHER,
+    /** Albums / singles carousels, populated for artist and editorial pages. */
+    val sections: List<HomeShelf> = emptyList(),
+    /** Apple's feature cards above an editorial page's shelves. */
+    val editorialHeroes: List<EditorialHero> = emptyList(),
+    /**
+     * Tracks YouTube offers to round out a playlist but that were never
+     * added — see [com.music.bitchord.data.innertube.InnertubeParser.parsePlaylistShelf].
+     * Shown as their own section with a button to actually add them, rather
+     * than folded into [songs] where they'd read as the user's own picks.
+     */
+    val suggestedSongs: List<Song> = emptyList(),
+    /**
+     * Whether this release can be saved to the library and whether it already
+     * is — null when the page doesn't offer it at all. Only ever set for an
+     * album or playlist fetched with a session; see [LibraryState].
+     */
+    val library: LibraryState? = null,
+    /**
+     * The editorial blurb YouTube Music writes for a release or an artist —
+     * absent for most playlists, which is also why the "About" section only
+     * ever shows for an album or an artist page.
+     */
+    val description: String? = null,
+    /** "1.2M subscribers" off an artist page's header — see [ArtistPage.subscriberCountText]. */
+    val subscriberCountText: String? = null,
+    /** "3.4M monthly listeners" off an artist page's header. */
+    val monthlyListenerCount: String? = null,
+    /**
+     * Whether this artist's channel can be subscribed to and whether it already
+     * is — null when the page doesn't offer it. Only ever set for an artist page
+     * fetched with a session; see [SubscriptionState].
+     */
+    val subscription: SubscriptionState? = null,
+    /**
+     * The token for the next page of this page's tracks, when it has one.
+     *
+     * Kept on the page rather than followed to the end in the background for
+     * the collections that have no last page — see [isEndlessMix]. Those grow
+     * as the listener scrolls instead.
+     */
+    val continuation: String? = null,
+    /** A next page is on the wire for this page. */
+    val loadingMore: Boolean = false,
+    /** Identifies one opening, so an older Apple response cannot fill a newer page. */
+    val requestId: Long = 0,
+    /** Ordered room/grouping/chart elements for a More to Explore page. */
+    val editorialElements: List<AppleEditorialElement>? = null,
+    val editorialDestination: AppleEditorialDestination? = null,
+    val concertHub: AppleConcertHub? = null,
+)
+
+/**
+ * Whether this browse id belongs to one of YouTube's endless generated mixes.
+ *
+ * The "RD…" families are the mixes: a Super Mix, an artist radio, the watch
+ * queue behind a track. Their continuation never runs dry — there is no last
+ * page to reach — so following it in the background fetches until the app is
+ * killed. They are grown by the listener scrolling instead.
+ */
+fun String.isEndlessMix(): Boolean = startsWith("RD")
+
+/**
+ * Whether an album or playlist is in the library, and the id that changes that.
+ *
+ * YouTube has no "save" verb for a release: a saved album is a *liked* one, and
+ * what gets liked is the playlist behind the page rather than the browse id the
+ * page was fetched with — an `MPREb…` album is backed by an `OLAK5uy_…`
+ * playlist, and liking the browse id does nothing at all. So the id has to be
+ * read off the page rather than derived from what was asked for.
+ */
+data class LibraryState(
+    val playlistId: String,
+    val saved: Boolean,
+)
+
+/**
+ * Whether an artist's channel is subscribed to, and the channel that changes.
+ *
+ * An artist page is a channel page underneath, and subscribing is the YouTube
+ * verb rather than a Music one: it takes the `UC…` channel id, which is also the
+ * page's own browse id. Read off the header's subscribe button rather than
+ * assumed from the browse id, because the button is also what says whether
+ * YouTube offers the action here at all.
+ */
+data class SubscriptionState(
+    val channelId: String,
+    val subscribed: Boolean,
+)
+
+/** Parsed artist landing page. */
+data class ArtistPage(
+    val songs: List<Song>,
+    /** Playlist holding the artist's full song list, when the page links one. */
+    val moreSongsBrowseId: String?,
+    val sections: List<HomeShelf>,
+    /** The artist's own picture, off the page header. */
+    val thumbnailUrl: String? = null,
+    /** The single artist this page is for, as the header bills them. */
+    val name: String? = null,
+    /** The artist bio YouTube Music writes for the page, when it has one. */
+    val description: String? = null,
+    /** "1.2M subscribers" — the artist's YouTube channel, when subscribed counts are shown. */
+    val subscriberCountText: String? = null,
+    /** "3.4M monthly listeners", off the same header. */
+    val monthlyListenerCount: String? = null,
+    /** The header's subscribe button, when the page carries one. */
+    val subscription: SubscriptionState? = null,
+)
+
+/**
+ * A track's thumbs rating on the signed-in account.
+ *
+ * [INDIFFERENT] is YouTube's own word for "neither", and is a real state
+ * rather than the absence of one — clearing a like is a request in its own
+ * right (`like/removelike`), not the omission of one.
+ */
+enum class LikeStatus { LIKE, DISLIKE, INDIFFERENT }
+
+/** Who can see a playlist. YouTube's own three values, sent verbatim. */
+enum class PlaylistPrivacy(val label: String, val apiValue: String) {
+    PRIVATE("Private", "PRIVATE"),
+    UNLISTED("Unlisted", "UNLISTED"),
+    PUBLIC("Public", "PUBLIC"),
+}
+
+/**
+ * One of the account's own playlists, as the picker lists them.
+ *
+ * [playlistId] is the raw id (no `VL`), because that is what the edit endpoint
+ * takes; [browseId] is the same playlist addressed as a page. Keeping both
+ * spares every caller from remembering which prefix each side wants.
+ */
+data class UserPlaylist(
+    val playlistId: String,
+    val title: String,
+    val subtitle: String,
+    val thumbnailUrl: String?,
+) {
+    val browseId: String get() = "VL$playlistId"
+}
+
+/**
+ * One radio station, as the radio page draws it.
+ *
+ * A station is either a *seeded* station — Apple's own queue of songs, built
+ * from an artist, a genre, a playlist or a song, and playable here — or a
+ * *live* one, which is a continuous stream Apple's own player holds under
+ * Widevine. A live station therefore carries an address to open rather than
+ * audio to play, and the page says so with [isLive] rather than pretending.
+ */
+data class RadioStation(
+    /** The catalogue's own id for the station. */
+    val id: String,
+    /** The station's name, as the catalogue gives it. */
+    val name: String,
+    /** The line under the name — an artist, a genre, a curator. */
+    val subtitle: String? = null,
+    /** The station's artwork. */
+    val artworkUrl: String? = null,
+    /** Whether this is a continuous live stream rather than a song queue. */
+    val isLive: Boolean = false,
+    /**
+     * Where a live station is opened.
+     *
+     * Apple's own page for it, when the catalogue published one. A station
+     * with no address cannot be opened anywhere, and the page says that
+     * rather than offering a tap that goes nowhere.
+     */
+    val deepLink: String? = null,
+    /**
+     * Who broadcasts it.
+     *
+     * Apple's own stations say "Apple Music"; the international ones say who
+     * else runs them. It is what Apple's own page puts under the name.
+     */
+    val provider: String? = null,
+    /**
+     * The page this row opens, when it is a page rather than a station.
+     *
+     * Apple's Radio page carries playlists beside its stations — the
+     * sessions, the mixes, the interviews — and those open as pages of their
+     * own, the way they do in Apple's own app.
+     */
+    val browseId: String? = null,
+)
+
+/**
+ * The per-track state that only YouTube can answer: its rating, and whether it
+ * is in the library.
+ *
+ * Library membership is not addressable by video id — it is toggled with an
+ * opaque feedback token that YouTube mints per row and per direction, so the
+ * tokens have to be fetched before the action can be offered at all. Both
+ * arrive together on the watch queue's own menu, which is why this is one
+ * lookup rather than two.
+ */
+data class SongMenu(
+    /**
+     * The rating YouTube states on this row, or null when the row states
+     * none — which is common, and is *not* the same as INDIFFERENT. A watch
+     * queue frequently renders without a like button at all, and reading that
+     * silence as "not liked" is how a liked song ends up claiming it isn't.
+     */
+    val likeStatus: LikeStatus?,
+    val inLibrary: Boolean,
+    val addToLibraryToken: String?,
+    val removeFromLibraryToken: String?,
+)
+
+sealed interface UiState<out T> {
+    data object Loading : UiState<Nothing>
+    data class Success<T>(val data: T) : UiState<T>
+    data class Error(val message: String) : UiState<Nothing>
+}
