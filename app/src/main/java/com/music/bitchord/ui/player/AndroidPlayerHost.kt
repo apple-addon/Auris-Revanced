@@ -320,6 +320,11 @@ class AndroidPlayerHost(context: Context) : PlayerHost {
         com.music.bitchord.ui.components.CastDialog(hazeState = hazeState, onDismiss = onDismiss)
 
     @Composable
+    override fun AudioOutputProcessing() {
+        com.music.bitchord.ui.player.AndroidAudioOutputProcessing()
+    }
+
+    @Composable
     override fun AudioPipelineDialog(hazeState: HazeState, isPlaying: Boolean, onDismiss: () -> Unit) =
         com.music.bitchord.ui.components.AudioPipelineDialog(
             hazeState = hazeState,

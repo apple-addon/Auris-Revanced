@@ -130,6 +130,7 @@ fun SettingsScreen(
     onSignOut: () -> Unit,
     onAccountScrobbling: () -> Unit,
     onEqualizer: () -> Unit,
+    onAudiophileAudio: () -> Unit,
     onOpenReplay: () -> Unit,
     onLyricsSources: () -> Unit,
     onTranslationLanguage: () -> Unit,
@@ -323,6 +324,7 @@ fun SettingsScreen(
                 sheets = sheets,
                 onSources = onSources,
                 onEqualizer = onEqualizer,
+                onAudiophileAudio = onAudiophileAudio,
             )
         }
         if (shows(SettingsCategory.PROVIDER)) {

@@ -16,9 +16,11 @@ import androidx.core.content.ContextCompat
 import androidx.media3.common.C
 import androidx.media3.common.Format
 import androidx.media3.common.MimeTypes
+import com.decent.usbaudio.DacQuirks
 import com.decent.usbaudio.UsbAudioDevice
 import com.decent.usbaudio.UsbAudioStream
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.playback.audio.drivers.DsdOutputMode
 import com.music.bitchord.playback.audio.ListenerVolumePolicy
 import com.music.bitchord.playback.audio.MediaVolumeProbe
 import com.music.bitchord.playback.audio.PrecisionAudioSink
@@ -51,6 +53,8 @@ class ExclusiveUsbOutput(
     @Volatile private var hardwareVolume = false
     @Volatile private var configuredRateHz = 0
     @Volatile private var configuredChannelCount = 0
+    @Volatile private var activeDsd = false
+    @Volatile private var activeDsdMode = DsdOutputMode.PCM
     @Volatile private var softwareGainValue = 1f
     @Volatile private var lastHardwareRate = 0
 
@@ -121,6 +125,9 @@ class ExclusiveUsbOutput(
     private var volumeProbed = false
     /** Fork setting: never let the DAC's Feature Unit own the listening level. */
     @Volatile private var forceSoftwareVolume = false
+    @Volatile private var keepAliveEnabled = false
+    @Volatile private var keepAliveRequested = false
+    private val keepAliveSilence = ByteArray(16 * 1024)
 
     private val sessionBlockedDevices = java.util.concurrent.ConcurrentHashMap<String, String>()
     @Volatile private var currentDeviceKey: String? = null
@@ -213,12 +220,24 @@ class ExclusiveUsbOutput(
 
     fun isForceSoftwareVolume(): Boolean = forceSoftwareVolume
 
+    /** Optional silent USB traffic to keep DACs with aggressive auto-sleep awake. */
+    fun setKeepAlive(value: Boolean) {
+        keepAliveRequested = value
+        keepAliveEnabled = value
+    }
+
+    fun isKeepAliveEnabled(): Boolean = keepAliveEnabled
+
     /** True when the attached DAC exposes a usable hardware volume (even if not used). */
     fun hasHardwareVolumeControl(): Boolean = active && featureVolume != null && (hardwareVolume || featureVolumeAttached)
 
     @Volatile private var featureVolumeAttached = false
 
     fun isActive(): Boolean = active
+
+    fun isDsdActive(): Boolean = active && activeDsd
+
+    fun currentDsdMode(): DsdOutputMode = activeDsdMode
 
     fun isClockMatched(): Boolean = active && clockMatched
 
@@ -359,6 +378,7 @@ class ExclusiveUsbOutput(
     fun configure(
         format: Format,
         bitDepthHint: Int? = null,
+        dsdMode: DsdOutputMode? = null,
     ): Boolean {
         if (!wanted) return false
         if (format.sampleMimeType != MimeTypes.AUDIO_RAW ||
@@ -386,6 +406,7 @@ class ExclusiveUsbOutput(
                     resolvedBits,
                     floatSource,
                     format.pcmEncoding,
+                    dsdMode,
                 )
             }.onFailure { error ->
                 Log.w(TAG, "Exclusive USB configure failed", error)
@@ -428,7 +449,7 @@ class ExclusiveUsbOutput(
             if (encoding < 0) return false
             val bytes = ByteArray(size)
             buffer.get(bytes)
-            if (gain < 1f - 1e-6f && gain >= 0f) {
+            if (!activeDsd && gain < 1f - 1e-6f && gain >= 0f) {
                 scalePcmBytes(bytes, encoding, gain)
             }
             QueuedPcm(null, bytes, encoding, size)
@@ -577,7 +598,9 @@ class ExclusiveUsbOutput(
         sourceBits: Int,
         floatSource: Boolean,
         pcmEncoding: Int,
+        dsdMode: DsdOutputMode? = null,
     ): Boolean {
+        var effectiveDsdMode = dsdMode
         val manager = appContext.getSystemService(Context.USB_SERVICE) as UsbManager
         val usbDevice = manager.deviceList.values.firstOrNull { dev ->
             (0 until dev.interfaceCount).any {
@@ -601,7 +624,9 @@ class ExclusiveUsbOutput(
             configuredChannelCount == channelCount &&
             active &&
             sourceEncoding == pcmEncoding &&
-            useFloatWrite == floatSource
+            useFloatWrite == floatSource &&
+            activeDsd == (effectiveDsdMode != null) &&
+            (effectiveDsdMode == null || activeDsdMode == effectiveDsdMode)
         ) {
             // The session was opened for this exact format; before trusting
             // it again, ask the DAC whether its clock still sits there.
@@ -630,19 +655,46 @@ class ExclusiveUsbOutput(
         usbAudio.closeDevice()
         connection = null
         currentDeviceKey = deviceKey
+        keepAliveEnabled = keepAliveRequested ||
+            DacQuirks.forDevice(usbDevice.vendorId, usbDevice.productId).keepAlive
         val info = usbAudio.openDevice(usbDevice)
             ?: return failLocked("openDevice failed" + (usbAudio.lastOpenError?.let { ": $it" } ?: ""))
         // Fills clockSourceRateMap, which lets setSampleRate() prefer the
         // crystal whose GET_RANGE actually covers the track rate.
         usbAudio.querySupportedSampleRates()
+        var effectiveSampleRate = sampleRate
 
-        var (alt, wireBits) = usbAudio.findAltSetting(bits, sampleRate, channelCount)
-            ?: return failLocked(
-                "no USB alt carries ${channelCount}ch ${bits}-bit at ${sampleRate}Hz",
-            )
-        var rateSetBefore = usbAudio.setSampleRate(sampleRate)
+        val selectedDsdAlt = when (effectiveDsdMode) {
+            DsdOutputMode.NATIVE_RAW -> usbAudio.findRawDsdAltSetting(effectiveSampleRate, channelCount)
+            DsdOutputMode.DOP -> usbAudio.findDopAltSetting(effectiveSampleRate, channelCount)
+            else -> null
+        }
+        if (effectiveDsdMode == DsdOutputMode.NATIVE_RAW && selectedDsdAlt == null) {
+            // Native raw is preferred, never invented: fall back to DoP only
+            // when a PCM24 alt at the matching carrier actually exists.
+            val dopRate = effectiveSampleRate * 2
+            val dopAlt = usbAudio.findDopAltSetting(dopRate, channelCount)
+            if (dopAlt != null) {
+                effectiveSampleRate = dopRate
+                effectiveDsdMode = DsdOutputMode.DOP
+            } else {
+                return failLocked("DAC exposes neither raw-DSD nor DoP at ${effectiveSampleRate}Hz")
+            }
+        }
+        val dsdAlt = if (effectiveDsdMode == DsdOutputMode.DOP) {
+            selectedDsdAlt ?: usbAudio.findDopAltSetting(effectiveSampleRate, channelCount)
+        } else {
+            selectedDsdAlt
+        }
+        var (alt, wireBits) = when {
+            effectiveDsdMode != null && dsdAlt != null -> dsdAlt.alternateSetting to dsdAlt.bitResolution
+            effectiveDsdMode != null -> return failLocked("no USB DSD alt carries ${channelCount}ch at ${effectiveSampleRate}Hz")
+            else -> usbAudio.findAltSetting(bits, effectiveSampleRate, channelCount)
+                ?: return failLocked("no USB alt carries ${channelCount}ch ${bits}-bit at ${effectiveSampleRate}Hz")
+        }
+        var rateSetBefore = usbAudio.setSampleRate(effectiveSampleRate)
         if (!usbAudio.setAltSetting(alt)) {
-            val fallbackAlt = usbAudio.findAltSetting(24, sampleRate, channelCount)
+            val fallbackAlt = usbAudio.findAltSetting(24, effectiveSampleRate, channelCount)
             if (fallbackAlt != null && fallbackAlt.first != alt && usbAudio.setAltSetting(fallbackAlt.first)) {
                 alt = fallbackAlt.first
                 wireBits = fallbackAlt.second
@@ -651,15 +703,15 @@ class ExclusiveUsbOutput(
             }
         }
         var reported = usbAudio.readSampleRate()
-        if (!rateSetBefore || (reported > 0 && reported != sampleRate)) {
-            rateSetBefore = usbAudio.setSampleRate(sampleRate)
+        if (!rateSetBefore || (reported > 0 && reported != effectiveSampleRate)) {
+            rateSetBefore = usbAudio.setSampleRate(effectiveSampleRate)
             reported = usbAudio.readSampleRate()
         }
         // A DAC's PLL needs a moment to relock, and GET_CUR can report the
         // old rate until it does. Give it a bounded settle before calling a
         // disagreeing readback a failure.
         var settleTries = 0
-        while (reported > 0 && reported != sampleRate && settleTries < CLOCK_SETTLE_TRIES) {
+        while (reported > 0 && reported != effectiveSampleRate && settleTries < CLOCK_SETTLE_TRIES) {
             Thread.sleep(CLOCK_SETTLE_STEP_MS)
             reported = usbAudio.readSampleRate()
             settleTries++
@@ -672,15 +724,15 @@ class ExclusiveUsbOutput(
         // some other rate.
         val clockReadback = reported > 0
         val clockVerified = if (clockReadback) {
-            reported == sampleRate
+            reported == effectiveSampleRate
         } else {
             rateSetBefore && usbAudio.isRateWriteTrusted()
         }
         if (!clockVerified) {
             val detail = if (clockReadback) {
-                "DAC clock is ${reported}Hz, track needs ${sampleRate}Hz (no resampling in bit-perfect)"
+                "DAC clock is ${reported}Hz, track needs ${effectiveSampleRate}Hz (no resampling in bit-perfect)"
             } else {
-                "DAC did not accept the ${sampleRate}Hz clock request and does not report its rate"
+                "DAC did not accept the ${effectiveSampleRate}Hz clock request and does not report its rate"
             }
             return failLocked(detail)
         }
@@ -721,7 +773,7 @@ class ExclusiveUsbOutput(
             info.interfaceId,
             selectedOut.address,
             selectedFeedback?.address ?: 0,
-            sampleRate,
+            effectiveSampleRate,
             channelCount,
             wireBits,
             maxPacket,
@@ -736,9 +788,11 @@ class ExclusiveUsbOutput(
         connection = info.connection
         stream = created
         sourceEncoding = pcmEncoding
+        activeDsd = effectiveDsdMode != null
+        activeDsdMode = effectiveDsdMode ?: DsdOutputMode.PCM
         activeWireBits = wireBits
         useFloatWrite = floatSource
-        configuredRateHz = sampleRate
+        configuredRateHz = effectiveSampleRate
         configuredChannelCount = channelCount
         active = true
         lastFailureReason = null
@@ -787,7 +841,7 @@ class ExclusiveUsbOutput(
         }
         Log.i(
             TAG,
-            "decent USB started ${usbDevice.productName} ${sampleRate}Hz " +
+            "decent USB started ${usbDevice.productName} ${effectiveSampleRate}Hz " +
                 "alt=$alt wireBits=$wireBits reported=$reported clockMatched=$clockMatched " +
                 "hardwareVolume=$hardwareVolume",
         )
@@ -802,10 +856,10 @@ class ExclusiveUsbOutput(
             "exclusive volume hardware=$hardwareVolume level=$listenerLevel " +
                 "dacBase=${dacBaseDb}dB softwareGain=$softwareGainValue",
         )
-        sessionSummary = "started rate=${sampleRate}Hz ch=$channelCount alt=$alt wireBits=$wireBits " +
+        sessionSummary = "started rate=${effectiveSampleRate}Hz ch=$channelCount alt=$alt wireBits=$wireBits " +
             "reported=$reported clockMatched=$clockMatched readback=$clockReadbackSupported " +
             "hardwareVolume=$hardwareVolume maxPacket=$maxPacket interval=$dataInterval " +
-            "feedback=${selectedFeedback != null}"
+            "feedback=${selectedFeedback != null} dsdMode=$activeDsdMode"
         startWriterLocked(created)
         return true
     }
@@ -989,7 +1043,16 @@ class ExclusiveUsbOutput(
                 continue
             }
             if (next === IDLE_MARKER) {
-                runCatching { target.pump() }
+                if (keepAliveEnabled) {
+                    val encoding = when (activeWireBits) {
+                        16 -> C.ENCODING_PCM_16BIT
+                        24 -> C.ENCODING_PCM_24BIT
+                        else -> C.ENCODING_PCM_32BIT
+                    }
+                    runCatching { target.writeRaw(keepAliveSilence, encoding) }
+                } else {
+                    runCatching { target.pump() }
+                }
                 continue
             }
             if (!clockStillMatches()) break
@@ -1000,6 +1063,7 @@ class ExclusiveUsbOutput(
             lastWriteElapsedMs = SystemClock.elapsedRealtime()
             try {
                 if (next.floats != null) target.write(next.floats)
+                else if (next.raw != null && activeDsd) target.writeDsd(next.raw, activeWireBits)
                 else if (next.raw != null) target.writeRaw(next.raw, next.encoding)
             } finally {
                 writingInProgress = false
@@ -1099,6 +1163,8 @@ class ExclusiveUsbOutput(
         clockReadbackSupported = false
         configuredRateHz = 0
         configuredChannelCount = 0
+        activeDsd = false
+        activeDsdMode = DsdOutputMode.PCM
         active = false
         softwareGainValue = 1f
         dacBaseDb = 0.0

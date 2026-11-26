@@ -1,6 +1,7 @@
 package com.music.bitchord.playback.reference
 
 import android.content.Context
+import com.music.bitchord.data.settings.AppSettings
 
 /** Reflection is confined to setup/control calls; never used by the PCM writer. */
 class HibyHostRuntime(private val loader: ClassLoader) {
@@ -55,7 +56,7 @@ class HibyHostRuntime(private val loader: ClassLoader) {
         val method = av.javaClass.getMethod("native_setObjectAttr", String::class.java, Any::class.java)
         method.invoke(av, "peq_global_param", floatArrayOf(if (enabled) 1f else 0f, preampDb, if (enabled) 1f else 0f))
         bands.forEachIndexed { index, band ->
-            require(band.size == 5) { "PEQ band $index needs enabled/frequency/gain/Q/type" }
+            require(band.size == 5) { "PEQ band $index needs enabled/frequency/Q/gain/type" }
             method.invoke(
                 av,
                 "peq_param",
@@ -68,6 +69,42 @@ class HibyHostRuntime(private val loader: ClassLoader) {
         val av = smartAv ?: error("HiBy SmartAv not initialized")
         av.javaClass.getMethod("native_setIntAttr", String::class.java, Int::class.javaPrimitiveType)
             .invoke(av, key, value)
+    }
+
+    fun outputRule(key: String): Int {
+        val av = smartAv ?: error("HiBy SmartAv not initialized")
+        return av.javaClass.getMethod("native_getIntAttr", String::class.java).invoke(av, key) as Int
+    }
+
+    /** Real HiBy force-rate, DSD, hardware-volume and gapless attributes. */
+    fun applyOutputRules() {
+        val fixedRate = AppSettings.hibyFixedOutputRateHz.value
+        setOutputRule("enable_force_rate", if (fixedRate > 0) 1 else 0)
+        setOutputRule("force_rate", fixedRate)
+        setOutputRule("dsd_mode", AppSettings.dsdOutputMode.value.nativeValue)
+        setOutputRule("set_hardware_vol", if (AppSettings.hibyUsbVolumeLock.value) 1 else 0)
+        setOutputRule("set_digital_vol", if (AppSettings.hibyUsbVolumeLock.value) 0 else 1)
+        setOutputRule("enable_fade_in", 1)
+        setOutputRule("enable_seamless", 1)
+        check(outputRule("force_rate") == fixedRate) {
+            "HiBy rejected force_rate=$fixedRate (readback=${outputRule("force_rate")})"
+        }
+        check(outputRule("enable_force_rate") == if (fixedRate > 0) 1 else 0) {
+            "HiBy rejected enable_force_rate for $fixedRate Hz"
+        }
+        check(outputRule("dsd_mode") == AppSettings.dsdOutputMode.value.nativeValue) {
+            "HiBy rejected DSD mode ${AppSettings.dsdOutputMode.value}"
+        }
+    }
+
+    fun setReplayGain(path: String, type: String, defaultGainDb: Int) {
+        val av = smartAv ?: error("HiBy SmartAv not initialized")
+        av.javaClass.getMethod(
+            "native_replayGain",
+            String::class.java,
+            String::class.java,
+            Int::class.javaPrimitiveType,
+        ).invoke(av, path, type, defaultGainDb)
     }
 
     companion object {

@@ -145,6 +145,9 @@ internal fun AudioOutputSheet(
             SpatialToggleRow(on = spatialOn, onClick = toggle)
             Spacer(Modifier.height(6.dp))
         }
+        // Android's reference EQ/MSEB/PEQ editors deliberately have no inner
+        // vertical scroller: this existing drawer owns the one scroll gesture.
+        PlayerPlatform.host.AudioOutputProcessing()
         AudioPipelineRow(onClick = onOpenPipeline)
     }
 }

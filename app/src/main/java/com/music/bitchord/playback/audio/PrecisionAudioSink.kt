@@ -15,6 +15,7 @@ import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.playback.AudioOutputStatus
 import com.music.bitchord.playback.audio.usb.DirectAudioOutput
+import com.music.bitchord.playback.audio.drivers.DsdOutputMode
 import com.music.bitchord.playback.usb.ExclusiveUsbOutput
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -408,8 +409,17 @@ class PrecisionAudioSink(
         // LastWave's order: release the mixer's claim before opening usbdevfs.
         runCatching { delegate.pause() }
         runCatching { delegate.flush() }
+        val dsdMode = dsdModeFor(format)
         val started = runCatching {
-            session.configure(format, bitDepthHint = bitDepthHint())
+            session.configure(
+                format = format,
+                bitDepthHint = when (dsdMode) {
+                    DsdOutputMode.DOP -> 24
+                    DsdOutputMode.NATIVE_RAW -> 32
+                    else -> bitDepthHint()
+                },
+                dsdMode = dsdMode,
+            )
         }.getOrDefault(false)
         // A DAC that latched a different clock would get source-rate bytes fed
         // to the wrong rate. This sink has no resampler, so the honest answer
@@ -670,7 +680,8 @@ class PrecisionAudioSink(
         // Bit-perfect is a per-buffer promise rather than a configure-time one:
         // switching it on must stop the very next buffer being altered, and
         // switching it off must not resume a limiter from where it left off.
-        val skipDsp = bitPerfect()
+        val dsdDirect = activeFormat?.let(::dsdModeFor) != null
+        val skipDsp = bitPerfect() || dsdDirect
         // The listener's own volume, cut here rather than by the system.
         //
         // A bit-perfect route bypasses the mixer, and the mixer's gain is
@@ -685,7 +696,9 @@ class PrecisionAudioSink(
         // The curve is the same one the exclusive USB route and the DAC's own
         // control use, so the slider means the same thing on every path.
         val mixerOutOfPath = skipDsp && mixerBypassed()
-        val userGain = if (mixerOutOfPath) {
+        val userGain = if (dsdDirect) {
+            1f // DoP/raw DSD is never sample-scaled.
+        } else if (mixerOutOfPath) {
             ListenerVolumePolicy.perceptualGain(AppSettings.playerVolume.value)
         } else {
             1f
@@ -740,7 +753,7 @@ class PrecisionAudioSink(
         // silently skipped under bit-perfect: if any stage is engaged,
         // isBypassed() is false and the block is decoded and processed. Bit-
         // perfect still passes through untouched when every stage is idle.
-        if (inEncoding == outEncoding && dspChain.isBypassed() && userGain >= 0.999f) {
+        if (inEncoding == outEncoding && (dsdDirect || dspChain.isBypassed()) && userGain >= 0.999f) {
             timestampedInputTimeUs = C.TIME_UNSET
             framesEmittedForInput = 0L
             if (!inputBuffer.hasRemaining()) return true
@@ -1141,6 +1154,16 @@ class PrecisionAudioSink(
         }
     }
 
+    private fun dsdModeFor(format: Format): DsdOutputMode? {
+        val container = format.containerMimeType?.lowercase(java.util.Locale.ROOT)
+        if (container !in setOf("audio/x-sacd-iso", "audio/x-dsf", "audio/x-dff") ||
+            format.codecs != "dsd-dop"
+        ) {
+            return null
+        }
+        return AppSettings.dsdOutputMode.value.takeIf { it != DsdOutputMode.PCM }
+    }
+
     private fun shouldActivatePrecision(format: Format): Boolean {
         val sampleMimeType = format.sampleMimeType
         if (sampleMimeType != null && sampleMimeType != MimeTypes.AUDIO_RAW) return false
@@ -1254,6 +1277,13 @@ class PrecisionAudioSink(
     }
 
     private fun publishOutputExactness(source: PcmEncoding, target: PcmEncoding) {
+        if (activeFormat?.let(::dsdModeFor) != null) {
+            AudioOutputStatus.publishOutputExactness(
+                exact = true,
+                detail = "Native DSD passthrough; no DSP, dither, resampling, or software volume",
+            )
+            return
+        }
         val exact = when (source) {
             PcmEncoding.PCM_16BIT -> target == PcmEncoding.PCM_16BIT
             PcmEncoding.PCM_24BIT_PACKED -> target == PcmEncoding.PCM_FLOAT

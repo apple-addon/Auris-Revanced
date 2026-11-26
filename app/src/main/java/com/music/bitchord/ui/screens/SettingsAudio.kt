@@ -21,12 +21,17 @@ import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.Upgrade
 import androidx.compose.material.icons.rounded.VolumeUp
 import androidx.compose.material.icons.rounded.Wifi
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -40,6 +45,8 @@ import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.AudioQuality
 import com.music.bitchord.data.settings.OutputPcmMode
 import com.music.bitchord.playback.AudioOutputStatus
+import com.music.bitchord.playback.audio.drivers.DsdOutputMode
+import com.music.bitchord.playback.audio.drivers.OutputDriver
 import java.util.Locale
 
 /** The Audio category: the source, streaming quality, output and the effects. */
@@ -49,6 +56,7 @@ internal fun AudioSettings(
     sheets: SettingsSheets,
     onSources: () -> Unit,
     onEqualizer: () -> Unit,
+    onAudiophileAudio: () -> Unit,
 ) {
     val wifiQuality by AppSettings.audioQualityWifi.collectAsStateWithLifecycle()
     val cellularQuality by AppSettings.audioQualityCellular.collectAsStateWithLifecycle()
@@ -60,6 +68,9 @@ internal fun AudioSettings(
     val loudnessNormalization by AppSettings.loudnessNormalization.collectAsStateWithLifecycle()
     val loudnessOffOnSpeaker by AppSettings.loudnessOffOnSpeaker.collectAsStateWithLifecycle()
     val outputStatus by AudioOutputStatus.current.collectAsStateWithLifecycle()
+    val outputDriver by AppSettings.outputDriver.collectAsStateWithLifecycle()
+    val dsdOutputMode by AppSettings.dsdOutputMode.collectAsStateWithLifecycle()
+    var showOutputDrivers by remember { mutableStateOf(false) }
     SearchableSettingsGroup(search, SettingsCategory.AUDIO) {
         val sourceTitle = stringResource(R.string.source)
         val sourceSubtitle = stringResource(R.string.sources_subtitle)
@@ -69,6 +80,14 @@ internal fun AudioSettings(
                 title = sourceTitle,
                 subtitle = sourceSubtitle,
                 onClick = onSources,
+            )
+        }
+        row("Audiophile audio", "outputs", "replay gain", "audio focus", "resampler", "bit perfect") {
+            SettingsRow(
+                icon = Icons.Rounded.GraphicEq,
+                title = "Audiophile audio",
+                subtitle = "Playback policies, processing, output routes, and device profiles",
+                onClick = onAudiophileAudio,
             )
         }
         // Sits here because it overrides what the two rows beneath decide,
@@ -140,6 +159,32 @@ internal fun AudioSettings(
                 options = OutputPcmMode.entries.map(OutputPcmMode::label),
                 selectedIndex = OutputPcmMode.entries.indexOf(outputPcmMode),
                 onSelect = { AppSettings.setOutputPcmMode(OutputPcmMode.entries[it]) },
+                modifier = Modifier.padding(start = TEXT_INSET, end = ROW_INSET, bottom = 14.dp),
+            )
+        }
+        row("Output driver", "aaudio", "opensl", "audio track", "hi-res", "usb", "exclusive") {
+            SettingsRow(
+                icon = Icons.Rounded.GraphicEq,
+                title = "Output driver",
+                subtitle = "Physical PCM endpoint. Native open failures are reported, never silently rerouted.",
+                value = outputDriver.label,
+                onClick = { showOutputDrivers = true },
+            )
+        }
+        row("DSD output", "sacd", "iso", "dop", "native raw", "uac2") {
+            SettingsRow(
+                icon = Icons.Rounded.GraphicEq,
+                title = "DSD output",
+                subtitle = if (bitPerfect || outputDriver == OutputDriver.USB_EXCLUSIVE) {
+                    "SACD ISO: ${dsdOutputMode.label} requested. Unsupported DAC formats fail closed; DSF/DFF remain PCM."
+                } else {
+                    "PCM fallback. Packed DoP/raw DSD requires Bit-perfect or USB Exclusive."
+                },
+            )
+            SegmentedControl(
+                options = DsdOutputMode.entries.map(DsdOutputMode::label),
+                selectedIndex = DsdOutputMode.entries.indexOf(dsdOutputMode),
+                onSelect = { AppSettings.setDsdOutputMode(DsdOutputMode.entries[it]) },
                 modifier = Modifier.padding(start = TEXT_INSET, end = ROW_INSET, bottom = 14.dp),
             )
         }
@@ -289,6 +334,42 @@ internal fun AudioSettings(
                 onClick = { sheets.showJamesDsp = true },
             )
         }
+    }
+    if (showOutputDrivers) {
+        AlertDialog(
+            onDismissRequest = { showOutputDrivers = false },
+            title = { Text("Output driver") },
+            text = {
+                Column {
+                    OutputDriver.entries.forEach { driver ->
+                        TextButton(
+                            onClick = {
+                                AppSettings.setOutputDriver(driver)
+                                showOutputDrivers = false
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(driver.label)
+                                    Text(
+                                        driver.sharingLabel,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                                if (driver == outputDriver) {
+                                    Icon(Icons.Rounded.Check, contentDescription = stringResource(R.string.selected))
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showOutputDrivers = false }) { Text(stringResource(R.string.done)) }
+            },
+        )
     }
 }
 

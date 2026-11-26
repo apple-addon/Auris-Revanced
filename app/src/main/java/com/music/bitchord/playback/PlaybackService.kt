@@ -66,6 +66,9 @@ import androidx.media3.exoplayer.mediacodec.MediaCodecUtil
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import androidx.media3.exoplayer.source.LoadEventInfo
 import androidx.media3.exoplayer.source.MediaLoadData
+import androidx.media3.extractor.metadata.id3.CommentFrame
+import androidx.media3.extractor.metadata.id3.TextInformationFrame
+import androidx.media3.extractor.metadata.vorbis.VorbisComment
 import androidx.media3.datasource.DataSource
 import androidx.media3.datasource.DataSpec
 import androidx.media3.datasource.TransferListener
@@ -99,6 +102,19 @@ import com.music.bitchord.playback.audio.LocalBitrateReading
 import com.music.bitchord.playback.audio.MeasuredBitrateMeter
 import com.music.bitchord.playback.usb.ExclusiveUsbOutput
 import com.music.bitchord.playback.usb.UsbDacMonitor
+import com.music.bitchord.playback.policy.AbsoluteVolumeProbe
+import com.music.bitchord.playback.policy.DvcSettings
+import com.music.bitchord.playback.policy.DvcVolumePolicy
+import com.music.bitchord.playback.policy.OutputRoute as PolicyOutputRoute
+import com.music.bitchord.playback.policy.VolumePolicyPlan
+import com.music.bitchord.playback.policy.ReplayGainPolicy
+import com.music.bitchord.playback.policy.ReplayGainSample
+import com.music.bitchord.playback.policy.ReplayGainSettings
+import com.music.bitchord.playback.policy.ReplayGainTags
+import com.music.bitchord.playback.policy.ReplayGainTagParser
+import com.music.bitchord.playback.policy.ReplayGainSource as PolicyReplayGainSource
+import com.music.bitchord.ui.audiophile.ReplayGainMode
+import com.music.bitchord.ui.audiophile.ReplayGainSource as UiReplayGainSource
 import com.music.bitchord.playback.reference.AurisAudioOutputProvider
 import com.music.bitchord.playback.reference.ReferenceEngineLoader
 import com.music.bitchord.data.settings.ReferenceEngineMode
@@ -109,6 +125,7 @@ import com.music.bitchord.playback.cast.CastStream
 import com.music.bitchord.playback.audio.PrecisionAudioSink
 import com.music.bitchord.playback.dsd.DsdExtractorsFactory
 import com.music.bitchord.playback.audio.DirectAudioProbe
+import com.music.bitchord.playback.audio.drivers.OutputDriver
 import com.music.bitchord.playback.audio.OutputNegotiator
 import com.music.bitchord.playback.audio.PcmEncoding
 import com.music.bitchord.playback.audio.SourceDescriptor
@@ -611,6 +628,8 @@ class PlaybackService : MediaLibraryService() {
     /** Last availability line this service put in the signal-path row. */
     private var lastUsbAvailabilityDetail: String? = null
     private var currentAudioInputFormat: Format? = null
+    private val replayGainTags = ConcurrentHashMap<String, ReplayGainTags>()
+    private val replayGainSamples = ConcurrentHashMap<String, ReplayGainSample>()
     private val outputDeviceCallback = object : AudioDeviceCallback() {
         override fun onAudioDevicesAdded(addedDevices: Array<AudioDeviceInfo>) {
             // Plugging something in moves the music to it. Always — a choice
@@ -1285,6 +1304,11 @@ class PlaybackService : MediaLibraryService() {
             applySimulatedAtmosEnabled()
             publishNerdStats()
             currentAudioInputFormat = format
+            audioFormatFor?.let { id ->
+                replayGainTags[id] = format.replayGainTags()
+                replayGainSamples.remove(id)
+            }
+            publishLoudnessFor(audioFormatFor)
             applyOutputRoute()
         }
 
@@ -1715,6 +1739,10 @@ class PlaybackService : MediaLibraryService() {
         }
         if (restored) {
             publishWidgetState()
+            if (AppSettings.audiophileAudioState.value.audioFocus.resumeOnStart) {
+                exoPlayer.prepare()
+                exoPlayer.playWhenReady = true
+            }
         } else {
             MediaWidgetSnapshot.save(this, MediaWidgetSnapshot.EMPTY)
             MediaWidget.refresh(this)
@@ -3761,7 +3789,7 @@ class PlaybackService : MediaLibraryService() {
         .setRenderersFactory(silenceSkippingRenderers(sing, spatial, simAtmos, equalizer, jamesDsp, filter, loudness))
         .setMediaSourceFactory(requireNotNull(mediaSourceFactory))
         .setLoadControl(farBufferingLoadControl())
-        .setAudioAttributes(AUDIO_ATTRIBUTES, /* handleAudioFocus = */ ownsSession)
+        .setAudioAttributes(AUDIO_ATTRIBUTES, /* handleAudioFocus = */ shouldHandleAudioFocus(ownsSession))
         .setHandleAudioBecomingNoisy(ownsSession)
         // Back restarts the track once you're this far into it; only a
         // press before that steps to the previous one.
@@ -3830,8 +3858,14 @@ class PlaybackService : MediaLibraryService() {
      * the song you are listening to, which is whichever one the session is on.
      */
     private fun setSessionOwner(target: ExoPlayer, owns: Boolean) {
-        target.setAudioAttributes(AUDIO_ATTRIBUTES, /* handleAudioFocus = */ owns)
+        target.setAudioAttributes(AUDIO_ATTRIBUTES, /* handleAudioFocus = */ shouldHandleAudioFocus(owns))
         target.setHandleAudioBecomingNoisy(owns)
+    }
+
+    private fun shouldHandleAudioFocus(ownsSession: Boolean): Boolean {
+        if (!ownsSession) return false
+        val settings = AppSettings.audiophileAudioState.value.audioFocus
+        return settings.pauseInCall || settings.shortAudioFocusChangeCalls || settings.permanentAudioFocusChange
     }
 
     /**
@@ -7044,8 +7078,15 @@ class PlaybackService : MediaLibraryService() {
         // like in `codecs`, and that is the name worth showing — with the DSD
         // stream's own bitrate and rate (2.8224 MHz for DSD64) rather than the
         // 176.4 kHz PCM it became.
-        val dsd = format?.codecs?.takeIf { it.startsWith("dsd") }
-        val dsdRateHz = dsd?.removePrefix("dsd")?.toIntOrNull()?.times(44_100)
+        val dsd = when {
+            format?.containerMimeType == "audio/x-sacd-iso" -> "dsd64"
+            else -> format?.codecs?.takeIf { it.startsWith("dsd") }
+        }
+        val dsdRateHz = if (format?.containerMimeType == "audio/x-sacd-iso") {
+            44_100 * 64
+        } else {
+            dsd?.removePrefix("dsd")?.toIntOrNull()?.times(44_100)
+        }
         val isLossless = dsd != null || NerdStats.isLosslessMime(format?.sampleMimeType)
         val isRawPcm = NerdStats.isRawPcm(format?.sampleMimeType)
         val pcmDataRate = measured?.pcmBitrateKbps
@@ -7113,6 +7154,7 @@ class PlaybackService : MediaLibraryService() {
             container = when (format?.containerMimeType) {
                 "audio/x-dsf" -> "DSF"
                 "audio/x-dff" -> "DFF"
+                "audio/x-sacd-iso" -> "SACD ISO"
                 else -> null
             },
         )
@@ -7873,7 +7915,8 @@ class PlaybackService : MediaLibraryService() {
                 // equaliser itself is unaffected because it runs upstream in
                 // [PrecisionAudioSink], not here.
                 .setEnableAudioTrackPlaybackParams(
-                    enableAudioTrackPlaybackParams || enableFloatOutput,
+                    enableAudioTrackPlaybackParams ||
+                        (enableFloatOutput && AppSettings.outputDriver.value !in NATIVE_PCM_DRIVERS),
                 )
                 .setAudioProcessorChain(
                     DefaultAudioSink.DefaultAudioProcessorChain(
@@ -7891,7 +7934,11 @@ class PlaybackService : MediaLibraryService() {
                 // Media3 1.11 hands every decoded PCM write to this provider;
                 // the HiBy branch is real OtHiByTrackUtils output, not a DSP label.
                 .setAudioOutputProvider(
-                    AurisAudioOutputProvider(context) { transition === activeFilter },
+                    AurisAudioOutputProvider(
+                        context = context,
+                        isAudible = { transition === activeFilter },
+                        activeDevice = ::resolveActiveOutputDevice,
+                    ),
                 )
                 .build()
 
@@ -7909,7 +7956,10 @@ class PlaybackService : MediaLibraryService() {
                 dspChain = dspChain,
                 enableFloatOutput = enableFloatOutput,
                 preferredOutputEncodingProvider = { format ->
-                    if (AppSettings.qualityOptions.value &&
+                    if (AppSettings.outputDriver.value in NATIVE_PCM_DRIVERS) {
+                        // The native endpoints accept interleaved Float32 only.
+                        PcmEncoding.PCM_FLOAT
+                    } else if (AppSettings.qualityOptions.value &&
                         AppSettings.referenceEngineMode.value == ReferenceEngineMode.HIBY
                     ) {
                         // OtHiByTrackUtils is configured for PCM16 in this
@@ -7924,6 +7974,8 @@ class PlaybackService : MediaLibraryService() {
                 // of the player when the output encoding itself is unchanged.
                 bitPerfect = {
                     AppSettings.bitPerfect.value ||
+                        AppSettings.outputDriver.value == OutputDriver.USB_EXCLUSIVE ||
+                        AppSettings.outputDriver.value == OutputDriver.USB_SYSTEM_BIT_PERFECT ||
                         (AppSettings.qualityOptions.value &&
                             AppSettings.referenceEngineMode.value == ReferenceEngineMode.BIT_PERFECT)
                 },
@@ -8044,7 +8096,8 @@ class PlaybackService : MediaLibraryService() {
             BitPerfectMixer.apply(
                 manager = manager,
                 device = activeDevice,
-                enabled = AppSettings.bitPerfect.value,
+                enabled = AppSettings.bitPerfect.value ||
+                    AppSettings.outputDriver.value == OutputDriver.USB_SYSTEM_BIT_PERFECT,
                 sampleRateHz = sampleRate,
                 channelCount = channels,
                 // The request has to name what the sink will actually write:
@@ -8168,14 +8221,14 @@ class PlaybackService : MediaLibraryService() {
         return negotiation.output.encoding
     }
 
-    private fun requestOutputReconfiguration() {
+    private fun requestOutputReconfiguration(forceRebuild: Boolean = false) {
         outputReconfigureJob?.cancel()
         outputReconfigureJob = scope.launch {
             // Replacing two renderers during a blend would cut one half of it.
             // Wait for the short transition to settle, then swap the engine.
             while (crossfade?.isTransitioning() == true) delay(50)
             val requestedFloat = shouldEnableFloatOutput()
-            if (requestedFloat == configuredFloatOutput) {
+            if (!forceRebuild && requestedFloat == configuredFloatOutput) {
                 applyOutputRoute()
             } else {
                 rebuildPlayersForOutput(requestedFloat)
@@ -8322,7 +8375,9 @@ class PlaybackService : MediaLibraryService() {
      * by the sink's per-buffer adoption attempt.
      */
     private fun exclusiveUsbWanted(): Boolean {
-        if (!AppSettings.bitPerfect.value) return false
+        if (!AppSettings.bitPerfect.value && AppSettings.outputDriver.value != OutputDriver.USB_EXCLUSIVE) {
+            return false
+        }
         val dac = usbDacMonitor.state.value.dac ?: return false
         return dac.hasUsbPeripheral && dac.usbPermissionGranted
     }
@@ -8376,6 +8431,7 @@ class PlaybackService : MediaLibraryService() {
     }
 
     private fun shouldEnableFloatOutput(): Boolean {
+        if (AppSettings.outputDriver.value in NATIVE_PCM_DRIVERS) return true
         val activeDevice = resolveActiveOutputDevice()
         val routeKind = resolveActiveRouteKind(activeDevice)
         // Worth knowing which way this cuts for a hi-res stream: with float
@@ -8400,6 +8456,7 @@ class PlaybackService : MediaLibraryService() {
     }
 
     private fun observeSettings() {
+        var initialReferenceSettings = true
         scope.launch {
             combine(AppSettings.qualityOptions, AppSettings.referenceEngineMode) { enabled, mode ->
                 enabled to mode
@@ -8411,8 +8468,76 @@ class PlaybackService : MediaLibraryService() {
                         ReferenceEngineLoader.bypass()
                     }
                 }
+                // Reference processors open their PCM graph at sink configure;
+                // a same-encoding switch still needs a fresh renderer pair. The
+                // initial emission only loads the host: restoreQueue still owns
+                // the just-created player at this point in startup.
+                if (initialReferenceSettings) {
+                    initialReferenceSettings = false
+                } else {
+                    requestOutputReconfiguration(forceRebuild = true)
+                }
+            }
+        }
+        scope.launch {
+            combine(
+                AppSettings.hibyFixedOutputRateHz,
+                AppSettings.dsdOutputMode,
+                AppSettings.hibyUsbVolumeLock,
+            ) { _, _, _ -> Unit }.collect {
+                withContext(Dispatchers.IO) {
+                    runCatching { ReferenceEngineLoader.hibyHost?.applyOutputRules() }
+                        .onFailure { ReferenceEngineLoader.markHibyOutput(false, "INIT FAILED: ${it.message}") }
+                }
                 requestOutputReconfiguration()
             }
+        }
+        scope.launch {
+            combine(
+                AppSettings.hibyMsebState,
+                AppSettings.hibyPeqState,
+                ReferenceEngineLoader.status,
+            ) { mseb, peq, snapshot -> Triple(mseb, peq, snapshot.hiby.state) }
+                .distinctUntilChanged()
+                .collect { (mseb, peq, _) ->
+                    withContext(Dispatchers.IO) {
+                        runCatching {
+                            val host = ReferenceEngineLoader.hibyHost ?: return@runCatching
+                            host.setMseb(
+                                mseb.enabled,
+                                IntArray(mseb.values.size) { index -> mseb.values[index].roundToInt() },
+                                mseb.preampDb,
+                            )
+                            host.setPeq(
+                                peq.enabled,
+                                peq.preampDb,
+                                peq.bands.map { band ->
+                                    // SmartAv wire order: on, Hz, gain dB, Q, filter.
+                                    floatArrayOf(
+                                        if (band.enabled) 1f else 0f,
+                                        band.frequencyHz,
+                                        band.gainDb,
+                                        band.q,
+                                        when (band.type) {
+                                            com.music.bitchord.ui.reference.PeqFilterType.PEAK -> 0f
+                                            com.music.bitchord.ui.reference.PeqFilterType.LOW_SHELF -> 1f
+                                            com.music.bitchord.ui.reference.PeqFilterType.HIGH_SHELF -> 2f
+                                            com.music.bitchord.ui.reference.PeqFilterType.LOW_PASS -> 3f
+                                            com.music.bitchord.ui.reference.PeqFilterType.HIGH_PASS -> 4f
+                                            com.music.bitchord.ui.reference.PeqFilterType.NOTCH -> 5f
+                                            com.music.bitchord.ui.reference.PeqFilterType.BAND_PASS -> 6f
+                                        },
+                                    )
+                                }.toTypedArray(),
+                            )
+                        }.onFailure {
+                            ReferenceEngineLoader.markHibyOutput(false, "INIT FAILED: ${it.message}")
+                        }
+                    }
+                }
+        }
+        scope.launch {
+            AppSettings.usbKeepAlive.collect { exclusiveUsb.setKeepAlive(it) }
         }
         scope.launch {
             AppSettings.skipSilence.collect { on -> eachPlayer { it.skipSilenceEnabled = on } }
@@ -8443,6 +8568,16 @@ class PlaybackService : MediaLibraryService() {
         }
         scope.launch {
             AppSettings.outputPcmMode.drop(1).collect { requestOutputReconfiguration() }
+        }
+        scope.launch {
+            AppSettings.outputDriver.drop(1).collect { driver ->
+                if (driver == OutputDriver.USB_EXCLUSIVE) ensureUsbPermission()
+                exclusiveUsb.setWanted(exclusiveUsbWanted())
+                publishExclusiveUsbAvailability()
+                // AAudio and OpenSL ES are different live endpoints even when
+                // both use Float32; reusing the old sink would ignore the switch.
+                requestOutputReconfiguration(forceRebuild = true)
+            }
         }
         scope.launch {
             AppSettings.bitPerfect.collect { enabled ->
@@ -8478,6 +8613,11 @@ class PlaybackService : MediaLibraryService() {
             AppSettings.playbackSpeed.collect { speed ->
                 if (crossfade?.isTransitioning() == true) return@collect
                 crossfade?.applyPlaybackSpeed(speed) ?: eachPlayer { it.setPlaybackSpeed(speed) }
+                if (AppSettings.outputDriver.value in NATIVE_PCM_DRIVERS) {
+                    // Native endpoints deliberately reject non-1x playback
+                    // rather than reporting a clock which the audio never follows.
+                    requestOutputReconfiguration(forceRebuild = true)
+                }
             }
         }
         scope.launch {
@@ -8534,6 +8674,14 @@ class PlaybackService : MediaLibraryService() {
         scope.launch {
             AppSettings.loudnessNormalization.collect {
                 setupLoudness(player?.currentMediaItem?.mediaId)
+            }
+        }
+        scope.launch {
+            AppSettings.audiophileAudioState.collect {
+                replayGainSamples.clear()
+                setupLoudness(player?.currentMediaItem?.mediaId)
+                player?.let { active -> setSessionOwner(active, owns = true) }
+                spare?.let { idle -> setSessionOwner(idle, owns = false) }
             }
         }
         scope.launch {
@@ -8759,9 +8907,95 @@ class PlaybackService : MediaLibraryService() {
      * the YouTube stream alongside the substitute lookup rather than only when
      * one fails — see [StreamResolver.loudnessDbFor]'s own doc.
      */
-    private fun loudnessGainFor(mediaId: String): Float = loudnessGainMb(mediaId)
-        ?.let { 10.0.pow(it / 2000.0).toFloat() }
-        ?: 1f
+    private fun loudnessGainFor(mediaId: String): Float {
+        val base = replayGainSampleFor(mediaId)?.sampleGain
+            ?: loudnessGainMb(mediaId)?.let { 10.0.pow(it / 2000.0).toFloat() }
+            ?: 1f
+        return base * dvcVolumePlan().headroomSampleGain
+    }
+
+    private fun dvcVolumePlan(): VolumePolicyPlan {
+        val state = AppSettings.audiophileAudioState.value.directVolumeControl
+        if (!AppSettings.qualityOptions.value) {
+            return DvcVolumePolicy.plan(
+                route = PolicyOutputRoute.NON_BLUETOOTH,
+                settings = DvcSettings(requested = true),
+            )
+        }
+        val bluetooth = AudioOutputStatus.current.value.routeKind == AudioRouting.Kind.BLUETOOTH
+        return DvcVolumePolicy.plan(
+            route = if (bluetooth && state.noDvcForBluetoothAbsoluteVolume) {
+                PolicyOutputRoute.BLUETOOTH_A2DP
+            } else {
+                PolicyOutputRoute.NON_BLUETOOTH
+            },
+            probe = AbsoluteVolumeProbe(
+                supported = if (bluetooth) state.bluetoothAbsoluteVolumeEnabled else null,
+                enabled = if (bluetooth) state.bluetoothAbsoluteVolumeEnabled else null,
+            ),
+            settings = DvcSettings(
+                requested = AppSettings.qualityOptions.value && state.dvcEnabled,
+                supported = true,
+                noDvcHeadroomGainDb = state.noDvcHeadroomGainDb.toDouble(),
+            ),
+        )
+    }
+
+    private fun replayGainSampleFor(mediaId: String): ReplayGainSample? {
+        val state = AppSettings.audiophileAudioState.value.replayGain
+        if (!AppSettings.qualityOptions.value || state.mode == ReplayGainMode.OFF) return null
+        if (AppSettings.loudnessOffOnSpeaker.value &&
+            AudioOutputStatus.current.value.routeKind == AudioRouting.Kind.PHONE
+        ) return null
+        return replayGainSamples.computeIfAbsent(mediaId) { id ->
+            ReplayGainPolicy.sampleGain(
+                tags = replayGainTags[id] ?: ReplayGainTags(),
+                settings = ReplayGainSettings(
+                    enabled = true,
+                    source = when (state.source) {
+                        UiReplayGainSource.TRACK -> PolicyReplayGainSource.TRACK
+                        UiReplayGainSource.ALBUM -> PolicyReplayGainSource.ALBUM
+                        UiReplayGainSource.SMART -> PolicyReplayGainSource.SMART
+                    },
+                    preampDb = state.rgPreampDb.toDouble(),
+                    noTagPreampDb = state.noRgPreampDb.toDouble(),
+                    preventClipping = state.mode == ReplayGainMode.APPLY_GAIN_PREVENT_CLIPPING,
+                ),
+                albumPlayback = isContinuousAlbumPlayback(id),
+            )
+        }
+    }
+
+    private fun Format.replayGainTags(): ReplayGainTags {
+        val values = mutableListOf<Pair<String, String?>>()
+        metadata?.let { tags ->
+            repeat(tags.length()) { index ->
+                when (val entry = tags[index]) {
+                    is VorbisComment -> values += entry.key to entry.value
+                    is TextInformationFrame -> {
+                        val key = entry.description?.takeIf { it.isNotBlank() } ?: entry.id
+                        values += key to entry.value
+                    }
+                    is CommentFrame -> values += entry.description to entry.text
+                }
+            }
+        }
+        return ReplayGainTagParser.parse(values)
+    }
+
+    private fun isContinuousAlbumPlayback(mediaId: String): Boolean {
+        val currentPlayer = player ?: return false
+        val index = currentPlayer.currentMediaItemIndex
+        if (index == C.INDEX_UNSET || currentPlayer.currentMediaItem?.mediaId != mediaId) return false
+        val album = currentPlayer.currentMediaItem?.mediaMetadata?.albumTitle?.toString()?.takeIf { it.isNotBlank() }
+            ?: return false
+        fun albumAt(candidate: Int): String? = if (candidate in 0 until currentPlayer.mediaItemCount) {
+            currentPlayer.getMediaItemAt(candidate).mediaMetadata.albumTitle?.toString()
+        } else {
+            null
+        }
+        return albumAt(index - 1) == album || albumAt(index + 1) == album
+    }
 
     private fun loudnessGainMb(mediaId: String?): Int? {
         if (!AppSettings.loudnessNormalization.value) return null
@@ -8795,12 +9029,24 @@ class PlaybackService : MediaLibraryService() {
     }
 
     private fun publishLoudnessFor(mediaId: String?) {
+        val headroomDb = dvcVolumePlan().headroomGainDb.toFloat()
+        mediaId?.let(::replayGainSampleFor)?.let { sample ->
+            AudioOutputStatus.publishLoudness(
+                gainDb = sample.appliedGainDb.toFloat() + headroomDb,
+                // ReplayGain dB is not an integrated-LUFS measurement.
+                lufs = null,
+            )
+            return
+        }
         val gainMb = loudnessGainMb(mediaId)
         val lufs = mediaId?.takeIf { it.isNotBlank() }?.let(StreamResolver::loudnessDbFor)
-        if (gainMb == null || lufs == null) {
-            AudioOutputStatus.publishLoudness(gainDb = null, lufs = null)
-        } else {
-            AudioOutputStatus.publishLoudness(gainDb = gainMb / 100f, lufs = lufs.toFloat())
+        when {
+            gainMb != null && lufs != null -> AudioOutputStatus.publishLoudness(
+                gainDb = gainMb / 100f + headroomDb,
+                lufs = lufs.toFloat(),
+            )
+            headroomDb != 0f -> AudioOutputStatus.publishLoudness(gainDb = headroomDb, lufs = null)
+            else -> AudioOutputStatus.publishLoudness(gainDb = null, lufs = null)
         }
     }
 
@@ -10915,6 +11161,8 @@ class PlaybackService : MediaLibraryService() {
             .build()
 
     private companion object {
+        val NATIVE_PCM_DRIVERS = setOf(OutputDriver.AAUDIO, OutputDriver.OPENSL_ES)
+
         const val MEDIA_ROOT_ID = "root"
         const val MEDIA_RECENTS_ID = "recents"
         const val MEDIA_QUICK_PICKS_ID = "quick_picks"

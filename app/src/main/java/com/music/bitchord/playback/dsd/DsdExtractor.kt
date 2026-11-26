@@ -19,6 +19,10 @@ import androidx.media3.extractor.SeekPoint
 import androidx.media3.extractor.TrackOutput
 import androidx.media3.extractor.metadata.id3.Id3Decoder
 import androidx.media3.extractor.metadata.id3.TextInformationFrame
+import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.playback.audio.drivers.DsdOutputMode
+import com.music.bitchord.playback.audio.drivers.OutputDriver
+import com.music.bitchord.playback.decoder.SacdIsoExtractor
 import java.io.EOFException
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -28,10 +32,47 @@ import java.nio.ByteOrder
  * support of any kind, so without this a `.dsf` or `.dff` fails to sniff.
  */
 @UnstableApi
-class DsdExtractorsFactory(private val delegate: ExtractorsFactory = DefaultExtractorsFactory()) : ExtractorsFactory {
-    override fun createExtractors(): Array<Extractor> = arrayOf(DsdExtractor(), *delegate.createExtractors())
-    override fun createExtractors(uri: Uri, responseHeaders: Map<String, List<String>>): Array<Extractor> =
-        arrayOf(DsdExtractor(), *delegate.createExtractors(uri, responseHeaders))
+class DsdExtractorsFactory(
+    private val delegate: ExtractorsFactory = DefaultExtractorsFactory(),
+    private val sacdTrackIndex: Int = 0,
+) : ExtractorsFactory {
+    init {
+        require(sacdTrackIndex >= 0) { "SACD track index cannot be negative" }
+    }
+
+    override fun createExtractors(): Array<Extractor> = arrayOf(
+        sacdExtractor(),
+        DsdExtractor(),
+        *delegate.createExtractors(),
+    )
+
+    override fun createExtractors(uri: Uri, responseHeaders: Map<String, List<String>>): Array<Extractor> = arrayOf(
+        sacdExtractor(),
+        DsdExtractor(),
+        *delegate.createExtractors(uri, responseHeaders),
+    )
+
+    private fun sacdExtractor(): Extractor = SacdIsoExtractor(
+        trackIndex = sacdTrackIndex,
+        transport = sacdTransportFor(
+            mode = AppSettings.dsdOutputMode.value,
+            exclusiveRawRequested = AppSettings.bitPerfect.value ||
+                AppSettings.outputDriver.value == OutputDriver.USB_EXCLUSIVE,
+        ),
+    )
+}
+
+/** Packed DSD is offered only to the userspace exclusive path; all other routes get PCM. */
+internal fun sacdTransportFor(
+    mode: DsdOutputMode,
+    exclusiveRawRequested: Boolean,
+): SacdIsoExtractor.Transport {
+    if (mode == DsdOutputMode.PCM || !exclusiveRawRequested) return SacdIsoExtractor.Transport.PCM
+    return when (mode) {
+        DsdOutputMode.PCM -> SacdIsoExtractor.Transport.PCM
+        DsdOutputMode.DOP -> SacdIsoExtractor.Transport.DOP
+        DsdOutputMode.NATIVE_RAW -> SacdIsoExtractor.Transport.RAW_UAC2
+    }
 }
 
 /**

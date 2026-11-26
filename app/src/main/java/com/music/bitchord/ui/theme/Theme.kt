@@ -24,6 +24,8 @@ import com.music.bitchord.R
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.ui.components.LocalScriptFontFamilies
 import com.music.bitchord.ui.components.ScriptFontFamilies
+import com.music.bitchord.ui.policy.AudioConflictDialog
+import com.music.bitchord.ui.policy.AudioPolicyIntent
 
 // Apple Music's signature red. No longer the primary accent, but kept for the
 // spots (Replay's rank badge) that want that specific red regardless of theme.
@@ -57,6 +59,18 @@ private val AppleDarkColors = darkColorScheme(
     surfaceVariant = Color(0xFF2C2C2E),
     onSurfaceVariant = Color(0xFF8E8E93),
     outline = Color(0xFF38383A),
+)
+
+private val AppleLightColors = lightColorScheme(
+    primary = Color(0xFF007AFF),
+    onPrimary = Color.White,
+    background = Color.White,
+    onBackground = Color.Black,
+    surface = Color(0xFFF2F2F7),
+    onSurface = Color.Black,
+    surfaceVariant = Color(0xFFE5E5EA),
+    onSurfaceVariant = Color(0xFF6E6E73),
+    outline = Color(0xFFD1D1D6),
 )
 
 private val LightColors = lightColorScheme(
@@ -152,11 +166,21 @@ fun BitChordTheme(
         MaterialTheme(
             colorScheme = when {
                 appleLook && darkTheme -> AppleDarkColors
+                appleLook -> AppleLightColors
                 darkTheme -> DarkColors
                 else -> LightColors
             },
             typography = BitChordTypography.withFamily(family),
-            content = content,
+            content = {
+                content()
+                val policyState by AppSettings.audioPolicyState.collectAsStateWithLifecycle()
+                AudioConflictDialog(
+                    pending = policyState.pendingConflict,
+                    provider = providerAxes.ui,
+                    onCancel = AppSettings::cancelAudioPolicyConflict,
+                    onConfirm = AppSettings::confirmAudioPolicyConflict,
+                )
+            },
         )
     }
 }

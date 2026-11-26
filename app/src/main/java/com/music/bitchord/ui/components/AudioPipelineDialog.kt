@@ -74,7 +74,13 @@ import com.music.bitchord.playback.audio.AudioFidelity
 import com.music.bitchord.playback.audio.VolumeApplication
 import com.music.bitchord.playback.dsd.DsdFilter
 import com.music.bitchord.playback.dsd.DsdFormat
+import com.music.bitchord.playback.audio.drivers.DsdOutputMode
+import com.music.bitchord.playback.reference.AurisAudioOutputProvider
+import com.music.bitchord.playback.reference.ReferenceEngineLoader
+import com.music.bitchord.ui.policy.AudioPipelineExtension
+import com.music.bitchord.ui.policy.buildAudioPipelineExtension
 import dev.chrisbanes.haze.HazeState
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import java.util.Locale
 import kotlin.math.abs
@@ -119,6 +125,7 @@ private val PIPELINE_ICON_TINT = Color.White.copy(alpha = 0.6f)
  */
 private fun bitExactVerdict(
     dsd: Boolean,
+    rawDsdOutput: Boolean,
     outputExact: Boolean,
     outputExactDetail: String?,
     loudnessActive: Boolean,
@@ -133,6 +140,8 @@ private fun bitExactVerdict(
     // Not a fault to fix: there is no DSD output path (native DSD or DoP)
     // here, so the PCM conversion is a deviation every DSD track carries,
     // whatever the stages after it do.
+    dsd && rawDsdOutput && dspBypassed -> "Yes (packed DSD/DoP unchanged; DSP bypassed)"
+    dsd && rawDsdOutput -> "Raw DSD/DoP output; DSP bypass not verified"
     dsd -> "No — DSD converted to PCM"
     // The app scaling the samples is itself a change to them. The mixer's
     // gain is what a bit-perfect route gives up, and putting it back in
@@ -230,6 +239,21 @@ fun AudioPipelineDialog(
     val loudnessNormalization by AppSettings.loudnessNormalization.collectAsStateWithLifecycle()
     val singLevel by AppSettings.singLevel.collectAsStateWithLifecycle()
     val jamesDspEnabled by AppSettings.jamesDspEnabled.collectAsStateWithLifecycle()
+    val dsdOutputMode by AppSettings.dsdOutputMode.collectAsStateWithLifecycle()
+    val qualityOptions by AppSettings.qualityOptions.collectAsStateWithLifecycle()
+    val referenceMode by AppSettings.referenceEngineMode.collectAsStateWithLifecycle()
+    val providerAxes by AppSettings.providerAxes.collectAsStateWithLifecycle()
+    val engineSnapshot by ReferenceEngineLoader.status.collectAsStateWithLifecycle()
+    val nativeOutput by AurisAudioOutputProvider.nativeOutputTelemetry.collectAsStateWithLifecycle()
+
+    // The endpoint owns its frame/xrun counters. Poll them only while this
+    // dialog is visible; no background telemetry loop lives in the player.
+    LaunchedEffect(Unit) {
+        while (isActive) {
+            AurisAudioOutputProvider.refreshNativeOutputTelemetry()
+            delay(1_000)
+        }
+    }
 
     val context = LocalContext.current
     val density = LocalDensity.current
@@ -324,7 +348,10 @@ fun AudioPipelineDialog(
             // renderer 176.4 kHz PCM, so every stage after this one has
             // to be told that rate instead of the DSD bit rate.
             val dsdRateHz = nerdStats?.takeIf { it.mimeType?.startsWith("audio/dsd") == true }?.sampleRateHz
-            val pcmRateHz = if (dsdRateHz != null) DsdFormat.PCM_RATE else nerdStats?.sampleRateHz
+            val rawDsdOutput = dsdRateHz != null && dsdOutputMode != DsdOutputMode.PCM &&
+                outputStatus.exclusiveUsbActive &&
+                outputStatus.transportType == com.music.bitchord.playback.audio.TransportType.DIRECT_USB
+            val pcmRateHz = if (dsdRateHz != null && !rawDsdOutput) DsdFormat.PCM_RATE else nerdStats?.sampleRateHz
             val codec = NerdStats.codecLabel(nerdStats?.mimeType) ?: nerdStats?.mimeType ?: "—"
             val format = nerdStats?.container?.let { "$codec ($it)" } ?: codec
             // A lossy codec has no bit depth of its own; the decoder's PCM
@@ -392,7 +419,9 @@ fun AudioPipelineDialog(
             }
 
             // 2. Decoder Stage
-            val decoderName = if (dsdRateHz != null) {
+            val decoderName = if (rawDsdOutput) {
+                "DSD transport (DST decode when present; no PCM decimation)"
+            } else if (dsdRateHz != null) {
                 "DSD to PCM (native FIR decimator)"
             } else {
                 outputStatus.decoderName ?: "—"
@@ -420,7 +449,11 @@ fun AudioPipelineDialog(
             // as what it is rather than as a resample, and its output
             // side is the PCM it produced, not the DSD rate.
             val inRate = dsdRateHz ?: nerdStats?.sampleRateHz
-            val outRate = if (dsdRateHz != null) DsdFormat.PCM_RATE else outputStatus.actualSampleRateHz
+            val outRate = when {
+                rawDsdOutput -> outputStatus.actualSampleRateHz ?: inRate
+                dsdRateHz != null -> DsdFormat.PCM_RATE
+                else -> outputStatus.actualSampleRateHz
+            }
             val isPassthrough = inRate != null && outRate != null && inRate == outRate
             val ioRateText = if (inRate != null && outRate != null) {
                 "${rateText(inRate)} → ${rateText(outRate)}"
@@ -432,6 +465,7 @@ fun AudioPipelineDialog(
                 "—"
             }
             val resamplerType = when {
+                rawDsdOutput -> if (dsdOutputMode == DsdOutputMode.DOP) "DoP packetization" else "Raw UAC2 DSD packetization"
                 dsdRateHz != null ->
                     "FIR decimation ×${dsdRateHz / DsdFormat.PCM_RATE}, ${DsdFormat.tapsFor(dsdRateHz)} taps"
                 inRate == null || outRate == null -> "—"
@@ -440,6 +474,7 @@ fun AudioPipelineDialog(
             }
             val cutoffText = if (dsdRateHz != null) rateText(DsdFilter.CUTOFF_HZ) else "—"
             val qualityText = when {
+                rawDsdOutput -> "Packed DSD unchanged; no PCM resampling or DSP"
                 dsdRateHz != null -> "DSD to PCM, full band below the cutoff"
                 inRate == null || outRate == null -> "—"
                 isPassthrough -> "Passthrough"
@@ -450,7 +485,11 @@ fun AudioPipelineDialog(
             PipelineSection(
                 stageIndex = 2,
                 icon = Icons.Rounded.Tune,
-                title = if (dsdRateHz != null) "DSD to PCM" else stringResource(R.string.pipeline_resampler),
+                title = when {
+                    rawDsdOutput -> "DSD transport"
+                    dsdRateHz != null -> "DSD to PCM"
+                    else -> stringResource(R.string.pipeline_resampler)
+                },
                 columnCoordinates = columnCoordinates,
                 stageActivationProvider = stageActivation,
                 onStageIconPositioned = onStageIconPositioned,
@@ -534,6 +573,7 @@ fun AudioPipelineDialog(
                     stringResource(R.string.pipeline_bit_exact),
                     bitExactVerdict(
                         dsd = dsdRateHz != null,
+                        rawDsdOutput = rawDsdOutput,
                         outputExact = outputStatus.outputExact,
                         outputExactDetail = outputStatus.outputExactDetail,
                         loudnessActive = loudnessNormalization && outputStatus.loudnessGainDb != null,
@@ -687,6 +727,20 @@ fun AudioPipelineDialog(
                     PipelineRow("Fallback", fallbackText)
                 }
             }
+
+            // Preserve the original five-stage readout and append the native
+            // facts rather than replacing them with a second pipeline UI.
+            AudioPipelineExtension(
+                model = buildAudioPipelineExtension(
+                    qualityOptions = qualityOptions,
+                    mode = referenceMode,
+                    engines = engineSnapshot,
+                    fidelityDeductions = fidelity.deductions,
+                    nativeOutput = nativeOutput,
+                ),
+                provider = providerAxes.ui,
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            )
         }
     }
 }

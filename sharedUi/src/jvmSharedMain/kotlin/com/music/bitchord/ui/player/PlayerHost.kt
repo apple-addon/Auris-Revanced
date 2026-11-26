@@ -100,6 +100,10 @@ interface PlayerHost {
     @Composable
     fun AudioPipelineDialog(hazeState: HazeState, isPlaying: Boolean, onDismiss: () -> Unit)
 
+    /** Platform audio editors mounted inside the output drawer's own scroller. */
+    @Composable
+    fun AudioOutputProcessing() = Unit
+
     /** Casting to a network receiver. Absent, and so never drawn, where the platform has none. */
     val castState: StateFlow<CastUi> get() = NoCast
 

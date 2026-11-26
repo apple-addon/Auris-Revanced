@@ -145,6 +145,13 @@ class UsbAudioStream(
         nativeUsbAudioWriteRaw(nativeHandle, pcmBuffer, inputBitDepth)
     }
 
+    /** Writes already packed DoP24 or native raw-DSD32 without PCM conversion. */
+    fun writeDsd(dsdBuffer: ByteArray, wireBits: Int) {
+        require(wireBits == 24 || wireBits == 32) { "DSD wire format must be DoP24 or raw-DSD32" }
+        if (nativeHandle == 0L) return
+        nativeUsbAudioWriteRaw(nativeHandle, dsdBuffer, wireBits)
+    }
+
     /**
      * Stop accepting new writes. Does NOT drain the pipeline.
      * Call [drainUrbs] after this to wait for all in-flight URBs to complete.

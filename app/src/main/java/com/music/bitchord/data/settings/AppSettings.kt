@@ -27,6 +27,20 @@ import com.music.bitchord.data.sources.SourceKind
 import com.music.bitchord.playback.EqLayout
 import com.music.bitchord.playback.EqualizerPreset
 import com.music.bitchord.playback.audio.JamesDspConfig
+import com.music.bitchord.playback.audio.drivers.DsdOutputMode
+import com.music.bitchord.playback.audio.drivers.OutputDriver
+import com.music.bitchord.ui.audiophile.AudiophileAudioState
+import com.music.bitchord.ui.reference.MsebState
+import com.music.bitchord.ui.reference.PeqState
+import com.music.bitchord.ui.reference.PowerampEqState
+import com.music.bitchord.ui.reference.normalized
+import com.music.bitchord.ui.policy.AudioConflictPolicy
+import com.music.bitchord.ui.policy.AudioPolicyChange
+import com.music.bitchord.ui.policy.AudioPolicyIntent
+import com.music.bitchord.ui.policy.AudioPolicyOperation
+import com.music.bitchord.ui.policy.AudioPolicySettings
+import com.music.bitchord.ui.policy.AudioPolicyTransaction
+import com.music.bitchord.ui.policy.AudioPolicyUiState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -41,6 +55,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.util.Locale
+import kotlin.math.roundToInt
 
 
 /**
@@ -606,6 +621,25 @@ object AppSettings {
 
     /** Selected reference graph; persisted independently of [qualityOptions]. */
     val referenceEngineMode = MutableStateFlow(ReferenceEngineMode.POWERAMP)
+
+    val outputDriver = MutableStateFlow(OutputDriver.AUDIO_TRACK)
+    val dsdOutputMode = MutableStateFlow(DsdOutputMode.PCM)
+    val hibyFixedOutputRateHz = MutableStateFlow(0)
+    val hibyUsbVolumeLock = MutableStateFlow(false)
+    val hibyGainCompensationDb = MutableStateFlow(0)
+    val usbKeepAlive = MutableStateFlow(false)
+
+    /** One pending conflict shared by Settings, the output sheet, and playback. */
+    val audioPolicyState = MutableStateFlow(AudioPolicyUiState())
+    private val audioPolicyLock = Any()
+
+    /** Immutable reference-editor snapshots; each write is one preference commit. */
+    val powerampEqState = MutableStateFlow(PowerampEqState())
+    val powerampPresetName = MutableStateFlow("User preset")
+    val hibyMsebState = MutableStateFlow(MsebState(enabled = false))
+    val hibyPeqState = MutableStateFlow(PeqState(enabled = false))
+    val audiophileAudioState = MutableStateFlow(AudiophileAudioState())
+    private val audioSnapshotLock = Any()
 
     /**
      * The listener's own volume, 0..1, as the app sees it.
@@ -1893,6 +1927,33 @@ object AppSettings {
                     ?: ReferenceEngineMode.POWERAMP.name,
             )
         }.getOrDefault(ReferenceEngineMode.POWERAMP)
+        outputDriver.value = runCatching {
+            OutputDriver.valueOf(prefs.getString(KEY_OUTPUT_DRIVER, OutputDriver.AUDIO_TRACK.name) ?: OutputDriver.AUDIO_TRACK.name)
+        }.getOrDefault(OutputDriver.AUDIO_TRACK)
+        syncAudioPolicyState()
+        dsdOutputMode.value = runCatching {
+            DsdOutputMode.valueOf(prefs.getString(KEY_DSD_OUTPUT_MODE, DsdOutputMode.PCM.name) ?: DsdOutputMode.PCM.name)
+        }.getOrDefault(DsdOutputMode.PCM)
+        hibyFixedOutputRateHz.value = prefs.getInt(KEY_HIBY_FIXED_OUTPUT_RATE, 0).coerceIn(0, 768000)
+        hibyUsbVolumeLock.value = prefs.getBoolean(KEY_HIBY_USB_VOLUME_LOCK, false)
+        hibyGainCompensationDb.value = prefs.getInt(KEY_HIBY_GAIN_COMPENSATION, 0).coerceIn(-24, 24)
+        usbKeepAlive.value = prefs.getBoolean(KEY_USB_KEEP_ALIVE, false)
+        powerampEqState.value = decodePowerampEqSnapshot(prefs.getString(KEY_POWERAMP_EQ_STATE, null))
+        powerampPresetName.value = prefs.getString(KEY_POWERAMP_PRESET_NAME, "User preset")
+            ?.trim()?.takeIf { it.isNotEmpty() } ?: "User preset"
+        hibyMsebState.value = decodeMsebSnapshot(prefs.getString(KEY_HIBY_MSEB_STATE, null))
+            .let { if (prefs.contains(KEY_HIBY_MSEB_STATE)) it else it.copy(enabled = false) }
+        hibyPeqState.value = decodePeqSnapshot(prefs.getString(KEY_HIBY_PEQ_STATE, null))
+            .let { if (prefs.contains(KEY_HIBY_PEQ_STATE)) it else it.copy(enabled = false) }
+        audiophileAudioState.value = decodeAudiophileSnapshot(
+            prefs.getString(KEY_AUDIOPHILE_AUDIO_STATE, null),
+        ).let { decoded ->
+            decoded.copy(
+                qualityOptionsEnabled = qualityOptions.value,
+                bitPerfect = decoded.bitPerfect.copy(perfectBitPerfectEnabled = bitPerfect.value),
+                advancedTweaks = decoded.advancedTweaks.copy(referenceMode = currentAudiophileReferenceMode()),
+            )
+        }
         preferUsbDac.value = prefs.getBoolean(KEY_PREFER_USB_DAC, false)
         // The listener's own level, remembered: the system volume cannot be
         // trusted on its own once a USB DAC is attached, because Android
@@ -3108,18 +3169,261 @@ object AppSettings {
     }
 
     fun setBitPerfect(value: Boolean) {
-        bitPerfect.value = value
-        prefs.edit().putBoolean(KEY_BIT_PERFECT, value).apply()
+        requestAudioPolicyChange(AudioPolicyChange.SetBitPerfect(value))
     }
 
     fun setQualityOptions(value: Boolean) {
-        if (::prefs.isInitialized && !prefs.edit().putBoolean(KEY_QUALITY_OPTIONS, value).commit()) return
-        qualityOptions.value = value
+        requestAudioPolicyChange(AudioPolicyChange.SetQualityOptions(value))
     }
 
     fun setReferenceEngineMode(value: ReferenceEngineMode) {
-        if (::prefs.isInitialized && !prefs.edit().putString(KEY_REFERENCE_ENGINE_MODE, value.name).commit()) return
-        referenceEngineMode.value = value
+        requestAudioPolicyChange(AudioPolicyChange.SetReferenceEngineMode(value))
+    }
+
+    fun setOutputDriver(value: OutputDriver) {
+        requestAudioPolicyChange(AudioPolicyChange.SetOutputDriver(value))
+    }
+
+    /** Routes every audio-path request through the same fail-closed reducer. */
+    fun requestAudioPolicyChange(change: AudioPolicyChange) {
+        reduceAudioPolicy(AudioPolicyIntent.Request(change))
+    }
+
+    fun confirmAudioPolicyConflict() {
+        reduceAudioPolicy(AudioPolicyIntent.ConfirmConflict)
+    }
+
+    fun cancelAudioPolicyConflict() {
+        reduceAudioPolicy(AudioPolicyIntent.CancelConflict)
+    }
+
+    private fun reduceAudioPolicy(intent: AudioPolicyIntent) {
+        synchronized(audioPolicyLock) {
+            val current = audioPolicyState.value.copy(settings = audioPolicySnapshot())
+            val reduction = AudioConflictPolicy.reduce(current, intent)
+            val transaction = reduction.transaction
+            if (transaction != null && !applyAudioPolicyTransaction(transaction)) return
+            audioPolicyState.value = reduction.state.copy(settings = audioPolicySnapshot())
+            audiophileAudioState.value = audiophileAudioState.value.copy(
+                qualityOptionsEnabled = qualityOptions.value,
+                bitPerfect = audiophileAudioState.value.bitPerfect.copy(
+                    perfectBitPerfectEnabled = bitPerfect.value,
+                ),
+                advancedTweaks = audiophileAudioState.value.advancedTweaks.copy(
+                    referenceMode = currentAudiophileReferenceMode(),
+                ),
+            )
+        }
+    }
+
+    private fun currentAudiophileReferenceMode() = when (referenceEngineMode.value) {
+        ReferenceEngineMode.POWERAMP -> com.music.bitchord.ui.audiophile.ReferenceMode.POWERAMP
+        ReferenceEngineMode.HIBY -> com.music.bitchord.ui.audiophile.ReferenceMode.HIBY
+        ReferenceEngineMode.HYBRID -> com.music.bitchord.ui.audiophile.ReferenceMode.HYBRID
+        ReferenceEngineMode.BIT_PERFECT -> com.music.bitchord.ui.audiophile.ReferenceMode.BIT_PERFECT
+    }
+
+    private fun audioPolicySnapshot() = AudioPolicySettings(
+        bitPerfect = bitPerfect.value,
+        qualityOptions = qualityOptions.value,
+        referenceEngineMode = referenceEngineMode.value,
+        outputDriver = outputDriver.value,
+    )
+
+    private fun syncAudioPolicyState() {
+        synchronized(audioPolicyLock) {
+            audioPolicyState.value = audioPolicyState.value.copy(settings = audioPolicySnapshot())
+        }
+    }
+
+    /**
+     * Persists one final snapshot, then publishes ordered flow changes which
+     * release the old endpoint before enabling its replacement. A failed
+     * preference commit changes neither disk nor live playback state.
+     */
+    private fun applyAudioPolicyTransaction(transaction: AudioPolicyTransaction): Boolean {
+        if (audioPolicySnapshot() != transaction.before) return false
+        val before = transaction.before
+        val after = transaction.after
+        if (::prefs.isInitialized) {
+            val editor = prefs.edit()
+            if (before.bitPerfect != after.bitPerfect) {
+                editor.putBoolean(KEY_BIT_PERFECT, after.bitPerfect)
+            }
+            if (before.qualityOptions != after.qualityOptions) {
+                editor.putBoolean(KEY_QUALITY_OPTIONS, after.qualityOptions)
+            }
+            if (before.referenceEngineMode != after.referenceEngineMode) {
+                editor.putString(KEY_REFERENCE_ENGINE_MODE, after.referenceEngineMode.name)
+            }
+            if (before.outputDriver != after.outputDriver) {
+                editor.putString(KEY_OUTPUT_DRIVER, after.outputDriver.name)
+            }
+            if (!editor.commit()) return false
+        }
+        transaction.operations.forEach { operation ->
+            when (operation) {
+                is AudioPolicyOperation.SetBitPerfect -> bitPerfect.value = operation.enabled
+                is AudioPolicyOperation.SetQualityOptions -> qualityOptions.value = operation.enabled
+                is AudioPolicyOperation.SetReferenceEngineMode -> referenceEngineMode.value = operation.mode
+                is AudioPolicyOperation.SetOutputDriver -> outputDriver.value = operation.driver
+            }
+        }
+        return true
+    }
+
+    fun setPowerampEqState(value: PowerampEqState, presetName: String? = null) {
+        val normalized = value.normalized()
+        val normalizedPresetName = presetName?.trim()?.takeIf { it.isNotEmpty() }
+        // The ten PEQ bands have a real HiBy endpoint. Balance, tempo and
+        // volume use the existing playback controls; all six values advance
+        // from one preference transaction rather than half-applying a preset.
+        val peq = PeqState(
+            enabled = normalized.equEnabled,
+            presetName = "Poweramp EQ",
+            preampDb = normalized.preampDb.coerceIn(-12f, 12f),
+            bands = normalized.bands.mapIndexed { index, band ->
+                com.music.bitchord.ui.reference.PeqBand(
+                    frequencyHz = band.frequencyHz,
+                    gainDb = (band.gainDb + when (index) {
+                        0 -> if (normalized.toneEnabled) normalized.bassDb else 0f
+                        normalized.bands.lastIndex -> if (normalized.toneEnabled) normalized.trebleDb else 0f
+                        else -> 0f
+                    }).coerceIn(-12f, 12f),
+                    q = band.q,
+                    enabled = band.enabled,
+                )
+            },
+        ).normalized()
+        val balance = normalized.balance.coerceIn(-1f, 1f)
+        val tempo = normalized.tempo.coerceIn(0.5f, 2f)
+        val volume = normalized.volume.coerceIn(0f, 1f)
+        synchronized(audioSnapshotLock) {
+            if (::prefs.isInitialized) {
+                val committed = prefs.edit()
+                    .putString(KEY_POWERAMP_EQ_STATE, encodePowerampEqSnapshot(normalized))
+                    .putString(KEY_POWERAMP_PRESET_NAME, normalizedPresetName ?: powerampPresetName.value)
+                    .putString(KEY_HIBY_PEQ_STATE, encodePeqSnapshot(peq))
+                    .putFloat(KEY_EQ_BALANCE, balance)
+                    .putFloat(KEY_SPEED, tempo)
+                    .putFloat(KEY_PLAYER_VOLUME, volume)
+                    .commit()
+                if (!committed) return
+            }
+            powerampEqState.value = normalized
+            normalizedPresetName?.let { powerampPresetName.value = it }
+            hibyPeqState.value = peq
+            equalizerBalance.value = balance
+            playbackSpeed.value = tempo
+            playerVolume.value = volume
+        }
+    }
+
+    fun setHibyMsebState(value: MsebState) {
+        val normalized = value.normalized()
+        synchronized(audioSnapshotLock) {
+            if (::prefs.isInitialized &&
+                !prefs.edit().putString(KEY_HIBY_MSEB_STATE, encodeMsebSnapshot(normalized)).commit()
+            ) return
+            hibyMsebState.value = normalized
+        }
+    }
+
+    fun setHibyPeqState(value: PeqState) {
+        val normalized = value.normalized()
+        synchronized(audioSnapshotLock) {
+            if (::prefs.isInitialized &&
+                !prefs.edit().putString(KEY_HIBY_PEQ_STATE, encodePeqSnapshot(normalized)).commit()
+            ) return
+            hibyPeqState.value = normalized
+        }
+    }
+
+    fun setAudiophileAudioState(value: AudiophileAudioState) {
+        val previous = audiophileAudioState.value
+        val newlyEnabledRoute = value.outputs.firstOrNull { route ->
+            route.enabled && previous.outputs.firstOrNull { it.id == route.id }?.enabled != true
+        }?.id
+        val requestedDriver = when (newlyEnabledRoute) {
+            com.music.bitchord.ui.audiophile.AudioOutputRouteId.OPEN_SL_ES -> OutputDriver.OPENSL_ES
+            com.music.bitchord.ui.audiophile.AudioOutputRouteId.HI_RES -> OutputDriver.HI_RES
+            com.music.bitchord.ui.audiophile.AudioOutputRouteId.AAUDIO -> OutputDriver.AAUDIO
+            com.music.bitchord.ui.audiophile.AudioOutputRouteId.USB_EXCLUSIVE -> OutputDriver.USB_EXCLUSIVE
+            com.music.bitchord.ui.audiophile.AudioOutputRouteId.AUDIO_TRACK -> OutputDriver.AUDIO_TRACK
+            else -> null
+        }
+        val qualityRequested = value.qualityOptionsEnabled != qualityOptions.value
+        val bitPerfectRequested = value.bitPerfect.perfectBitPerfectEnabled != bitPerfect.value
+        val requestedReferenceMode = when (value.advancedTweaks.referenceMode) {
+            com.music.bitchord.ui.audiophile.ReferenceMode.POWERAMP -> ReferenceEngineMode.POWERAMP
+            com.music.bitchord.ui.audiophile.ReferenceMode.HIBY -> ReferenceEngineMode.HIBY
+            com.music.bitchord.ui.audiophile.ReferenceMode.HYBRID -> ReferenceEngineMode.HYBRID
+            com.music.bitchord.ui.audiophile.ReferenceMode.BIT_PERFECT -> ReferenceEngineMode.BIT_PERFECT
+        }
+        val referenceModeRequested = value.advancedTweaks.referenceModeEnabled &&
+            requestedReferenceMode != referenceEngineMode.value
+        val normalized = value.copy(
+            qualityOptionsEnabled = qualityOptions.value,
+            bitPerfect = value.bitPerfect.copy(perfectBitPerfectEnabled = bitPerfect.value),
+            advancedTweaks = value.advancedTweaks.copy(referenceMode = currentAudiophileReferenceMode()),
+        )
+        val fade = normalized.crossfadeFadeGapless
+        val crossfade = if (fade.autoAdvanceFading == com.music.bitchord.ui.audiophile.AutoAdvanceFading.CROSSFADE) {
+            (fade.crossfadeLengthMs / 1_000).coerceIn(0, 60)
+        } else {
+            0
+        }
+        val cutSilence = fade.cutSilenceEnabled
+        val usbLock = normalized.advancedTweaks.usbVolumeLockEnabled
+        val gain = normalized.advancedTweaks.usbGainCompensationDb.roundToInt().coerceIn(-24, 24)
+        synchronized(audioSnapshotLock) {
+            if (::prefs.isInitialized) {
+                val committed = prefs.edit()
+                    .putString(KEY_AUDIOPHILE_AUDIO_STATE, encodeAudiophileSnapshot(normalized))
+                    .putInt(KEY_CROSSFADE, crossfade)
+                    .putBoolean(KEY_SKIP_SILENCE, cutSilence)
+                    .putBoolean(KEY_HIBY_USB_VOLUME_LOCK, usbLock)
+                    .putInt(KEY_HIBY_GAIN_COMPENSATION, gain)
+                    .commit()
+                if (!committed) return
+            }
+            audiophileAudioState.value = normalized
+            crossfadeSeconds.value = crossfade
+            skipSilence.value = cutSilence
+            hibyUsbVolumeLock.value = usbLock
+            hibyGainCompensationDb.value = gain
+        }
+        if (qualityRequested) setQualityOptions(value.qualityOptionsEnabled)
+        if (bitPerfectRequested) setBitPerfect(value.bitPerfect.perfectBitPerfectEnabled)
+        if (referenceModeRequested) setReferenceEngineMode(requestedReferenceMode)
+        if (requestedDriver != null && requestedDriver != outputDriver.value) setOutputDriver(requestedDriver)
+    }
+
+    fun setDsdOutputMode(value: DsdOutputMode) {
+        if (::prefs.isInitialized && !prefs.edit().putString(KEY_DSD_OUTPUT_MODE, value.name).commit()) return
+        dsdOutputMode.value = value
+    }
+
+    fun setHibyFixedOutputRateHz(value: Int) {
+        val clamped = value.coerceIn(0, 768000)
+        if (::prefs.isInitialized && !prefs.edit().putInt(KEY_HIBY_FIXED_OUTPUT_RATE, clamped).commit()) return
+        hibyFixedOutputRateHz.value = clamped
+    }
+
+    fun setHibyUsbVolumeLock(value: Boolean) {
+        if (::prefs.isInitialized && !prefs.edit().putBoolean(KEY_HIBY_USB_VOLUME_LOCK, value).commit()) return
+        hibyUsbVolumeLock.value = value
+    }
+
+    fun setHibyGainCompensationDb(value: Int) {
+        val clamped = value.coerceIn(-24, 24)
+        if (::prefs.isInitialized && !prefs.edit().putInt(KEY_HIBY_GAIN_COMPENSATION, clamped).commit()) return
+        hibyGainCompensationDb.value = clamped
+    }
+
+    fun setUsbKeepAlive(value: Boolean) {
+        if (::prefs.isInitialized && !prefs.edit().putBoolean(KEY_USB_KEEP_ALIVE, value).commit()) return
+        usbKeepAlive.value = value
     }
 
     /** Sets the face the whole app is set in. */
@@ -3646,6 +3950,17 @@ object AppSettings {
     private const val KEY_BIT_PERFECT = "bit_perfect"
     private const val KEY_QUALITY_OPTIONS = "quality_options"
     private const val KEY_REFERENCE_ENGINE_MODE = "reference_engine_mode"
+    private const val KEY_OUTPUT_DRIVER = "output_driver"
+    private const val KEY_DSD_OUTPUT_MODE = "dsd_output_mode"
+    private const val KEY_HIBY_FIXED_OUTPUT_RATE = "hiby_fixed_output_rate"
+    private const val KEY_HIBY_USB_VOLUME_LOCK = "hiby_usb_volume_lock"
+    private const val KEY_HIBY_GAIN_COMPENSATION = "hiby_gain_compensation"
+    private const val KEY_USB_KEEP_ALIVE = "usb_keep_alive"
+    private const val KEY_POWERAMP_EQ_STATE = "poweramp_eq_state_v1"
+    private const val KEY_POWERAMP_PRESET_NAME = "poweramp_preset_name"
+    private const val KEY_HIBY_MSEB_STATE = "hiby_mseb_state_v1"
+    private const val KEY_HIBY_PEQ_STATE = "hiby_peq_state_v1"
+    private const val KEY_AUDIOPHILE_AUDIO_STATE = "audiophile_audio_state_v1"
     private const val KEY_PREFER_USB_DAC = "prefer_usb_dac"
     private const val KEY_PLAYER_VOLUME = "player_volume"
     private const val KEY_LOUDNESS_NORMALIZATION = "loudness_normalization"

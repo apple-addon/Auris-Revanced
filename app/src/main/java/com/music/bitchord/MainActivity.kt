@@ -211,6 +211,7 @@ import com.music.bitchord.data.audiobook.AudiobookChapter
 import com.music.bitchord.ui.screens.QuickPicksScreen
 import com.music.bitchord.ui.screens.ContinueListeningScreen
 import com.music.bitchord.ui.screens.SettingsScreen
+import com.music.bitchord.ui.screens.AudiophileAudioScreen
 import com.music.bitchord.ui.screens.SourceEditorAlert
 import com.music.bitchord.ui.screens.SourcesScreen
 import com.music.bitchord.data.sources.TrackMatcher
@@ -3481,6 +3482,9 @@ private fun BitChordApp(
             nav.showEqualizer = false
             if (nav.settingsSubScreen == "equalizer") nav.settingsSubScreen = null
         }
+        BackHandler(enabled = nav.settingsSubScreen == "audiophile_audio") {
+            nav.settingsSubScreen = null
+        }
         // One back step out of Settings, or out of any tab but Home, lands on
         // Home rather than exiting — only Home itself hands back to the system,
         // which is what actually closes/minimizes the app.
@@ -4409,6 +4413,7 @@ private fun BitChordApp(
                         nav.showSources -> stringResource(R.string.sources)
                         nav.showListenTogether -> stringResource(R.string.listen_together)
                         nav.showEqualizer -> stringResource(R.string.equalizer)
+                        nav.settingsSubScreen == "audiophile_audio" -> "Audio"
                         nav.showSettings -> nav.settingsCategory
                             ?.let { com.music.bitchord.ui.screens.SettingsCategory.fromId(it) }
                             ?.let { stringResource(it.titleRes) }
@@ -4468,6 +4473,9 @@ private fun BitChordApp(
                         })
                         nav.showEqualizer -> ({
                             nav.showEqualizer = false
+                            nav.settingsSubScreen = null
+                        })
+                        nav.settingsSubScreen == "audiophile_audio" -> ({
                             nav.settingsSubScreen = null
                         })
                         nav.showSettings && nav.settingsCategory != null -> ({
@@ -5491,6 +5499,11 @@ private fun RootPage(
         )
     } else if (key == "equalizer") {
         EqualizerScreen(contentPadding = listPadding)
+    } else if (key == "audiophile_audio") {
+        AudiophileAudioScreen(
+            contentPadding = listPadding,
+            onExit = { nav.settingsSubScreen = null },
+        )
     } else if (key == "genres") {
         selectedMoodGenre?.let { category ->
             MoodGenrePlaylistsScreen(
@@ -5631,6 +5644,9 @@ private fun RootPage(
             onEqualizer = {
                 nav.settingsSubScreen = "equalizer"
                 nav.showEqualizer = true
+            },
+            onAudiophileAudio = {
+                nav.settingsSubScreen = "audiophile_audio"
             },
             onOpenReplay = {
                 nav.settingsSubScreen = "replay"
@@ -7969,6 +7985,7 @@ internal fun rootPageKey(
         nav.showSources -> "sources"
         nav.showListenTogether -> "listen_together"
         nav.showEqualizer -> "equalizer"
+        nav.settingsSubScreen == "audiophile_audio" -> "audiophile_audio"
         // Above Replay, not below it. The top bar's account
         // button sets `showSettings` from every page including
         // this one, so with Replay winning the tie the button

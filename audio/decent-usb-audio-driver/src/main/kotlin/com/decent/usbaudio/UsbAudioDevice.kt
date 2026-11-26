@@ -686,6 +686,18 @@ class UsbAudioDevice private constructor(private val context: Context) {
      * garbage rather than as a slightly worse format, so there is no blind
      * fallback here.
      */
+    /** Native UAC2 raw-DSD alternate setting, or null when the DAC has none. */
+    fun findRawDsdAltSetting(rateHz: Int, channelCount: Int): UacStreamAltSetting? {
+        val raw = connection?.rawDescriptors ?: return null
+        return Uac2DsdDescriptors.selectRawDsd(Uac2DsdDescriptors.parse(raw), rateHz, channelCount)
+    }
+
+    /** PCM24 alternate setting suitable for DoP at the PCM container rate. */
+    fun findDopAltSetting(rateHz: Int, channelCount: Int): UacStreamAltSetting? {
+        val raw = connection?.rawDescriptors ?: return null
+        return Uac2DsdDescriptors.selectDop(Uac2DsdDescriptors.parse(raw), rateHz, channelCount)
+    }
+
     fun findAltSetting(targetBitDepth: Int, rateHz: Int, channelCount: Int): Pair<Int, Int>? {
         if (parsedAltSettings.isEmpty()) {
             val info = cachedDeviceInfo ?: return Pair(1, 16)
