@@ -1,0 +1,485 @@
+package com.music.bitchord.ui.player
+
+import android.content.Context
+import android.database.ContentObserver
+import android.media.AudioFormat
+import android.media.AudioManager
+import android.os.Handler
+import android.os.Looper
+import android.provider.Settings
+import android.widget.Toast
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.music.bitchord.R
+import com.music.bitchord.data.canvas.CanvasArtwork
+import com.music.bitchord.data.canvas.CanvasRepository
+import com.music.bitchord.data.listentogether.ListenTogether
+import com.music.bitchord.data.lyrics.LyricLine
+import com.music.bitchord.data.lyrics.LyricsTranslation
+import com.music.bitchord.data.model.SearchFilter
+import com.music.bitchord.data.model.SearchResult
+import com.music.bitchord.data.model.Song
+import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.settings.LastPlayerScreen
+import com.music.bitchord.data.YtMusicRepository
+import com.music.bitchord.download.Downloads
+import com.music.bitchord.playback.AudioOutputStatus
+import com.music.bitchord.playback.AudioRouting
+import com.music.bitchord.playback.audio.ListenerVolumePolicy
+import com.music.bitchord.playback.audio.MediaVolumeProbe
+import com.music.bitchord.playback.AutomixAnalysisDemand
+import com.music.bitchord.playback.AutomixPreview
+import com.music.bitchord.playback.AutomixProfiles
+import com.music.bitchord.playback.QueueSearch
+import com.music.bitchord.playback.youtubeSeedFor
+import com.music.bitchord.playback.QueueSuggestion
+import com.music.bitchord.playback.cast.CastController
+import com.music.bitchord.playback.smart.AutomixOverride
+import dev.chrisbanes.haze.HazeState
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
+import java.util.Locale
+import kotlin.math.roundToInt
+
+/**
+ * The phone's answers to [PlayerHost]: AppSettings, the Media3 Canvas decoder,
+ * AudioRouting and the music stream's volume, the party, and the lyric
+ * translation endpoint — each exactly what the player read directly before it
+ * moved into the shared module.
+ */
+class AndroidPlayerHost(context: Context) : PlayerHost {
+    private val app = context.applicationContext
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val main = Handler(Looper.getMainLooper())
+
+    override val settings: PlayerSettingsSource = object : PlayerSettingsSource {
+        override val animatedCanvas get() = AppSettings.animatedCanvas
+        override val audioQualityCellular get() = AppSettings.audioQualityCellular
+        override val audioQualityWifi get() = AppSettings.audioQualityWifi
+        override val canvasOverCellular get() = AppSettings.canvasOverCellular
+        override val fullBleedArtwork get() = AppSettings.fullBleedArtwork
+        override val zoomOutAlbumArt get() = AppSettings.zoomOutAlbumArt
+        override val hideSongStatus get() = AppSettings.hideSongStatus
+        override val hideStatusBar get() = AppSettings.hideStatusBarInPlayer
+        override val hideVolumeBar get() = AppSettings.hideVolumeBar
+        override val lastPlayerScreen get() = AppSettings.lastPlayerScreen
+        override val legacyMeshGradient get() = AppSettings.legacyMeshGradient
+        override val lyricsBlur get() = AppSettings.lyricsBlur
+        override val liveBlur get() = AppSettings.liveBlur
+        override val textGlow get() = AppSettings.textGlow
+        override val lyricsOffsetMs get() = AppSettings.lyricsOffsetMs
+        override val lyricsSourceOrder get() = AppSettings.lyricsSourceOrder
+        override val meteredConnection get() = AppSettings.meteredConnection
+        override val preferUsbDac get() = AppSettings.preferUsbDac
+        override val prioritizeSpotifyCanvas get() = AppSettings.prioritizeSpotifyCanvas
+        override val spotifyCanvasEnabled get() = AppSettings.spotifyCanvasEnabled
+        override val motionMode get() = AppSettings.effectiveMotionMode
+        override val reduceAnimation get() = AppSettings.reduceAnimation
+        override val reduceDynamicBlur get() = AppSettings.reduceDynamicBlur
+        override val showNerdStats get() = AppSettings.showNerdStats
+        override val showNextTrackStatus get() = AppSettings.showNextTrackStatus
+        override val showUpgradeBadge get() = AppSettings.showUpgradeBadge
+        override val showLosslessBadge get() = AppSettings.showLosslessBadge
+        override val showHiResBadge get() = AppSettings.showHiResBadge
+        override val smartAnalysis get() = AppSettings.smartAnalysis
+        override val automixPanel get() = AppSettings.automixPanel
+        override val smartFadeEnabled get() = AppSettings.smartFadeEnabled
+        override val smartMixInProgress get() = AppSettings.smartMixInProgress
+        override val smartMixBlend get() = AppSettings.smartMixBlend
+        override val smartTransitionWindow get() = AppSettings.smartTransitionWindow
+        override val spotifyCanvasAutoHide get() = AppSettings.spotifyCanvasAutoHide
+        override val syncedLyrics get() = AppSettings.syncedLyrics
+        override val showNowPlayingLyrics get() = AppSettings.showNowPlayingLyrics
+        override val translationLanguage get() = AppSettings.translationLanguage
+        override val versionAlignmentInProgress get() = AppSettings.versionAlignmentInProgress
+
+        override fun setLastPlayerScreen(value: LastPlayerScreen) = AppSettings.setLastPlayerScreen(value)
+        override fun setLyricsOffsetMs(value: Int) = AppSettings.setLyricsOffsetMs(value)
+        override fun setFullBleedArtwork(value: Boolean) = AppSettings.setFullBleedArtwork(value)
+        override fun setZoomOutAlbumArt(value: Boolean) = AppSettings.setZoomOutAlbumArt(value)
+
+        // The listener's own choice, kept with the song. The store is the
+        // one place it lives, so the panel and the planner cannot disagree
+        // about what was chosen.
+        override fun setAutomixProfile(trackId: String, override: AutomixOverride) =
+            AutomixProfiles.set(trackId, override)
+
+        override fun clearAutomixProfile(trackId: String) = AutomixProfiles.clear(trackId)
+
+        // The panel's preview of the transition. The engine that can play it
+        // lives in the playback service, which leaves a handler for the panel
+        // to ask.
+        override fun previewAutomix(start: Boolean) = AutomixPreview.request(start)
+
+        // The panel's demand for the analysis it is waiting on. The engine
+        // that can fetch and measure it lives in the playback service, which
+        // leaves a handler for the panel to ask — the same arrangement as the
+        // preview above.
+        override fun forceAutomixAnalysis() = AutomixAnalysisDemand.request()
+    }
+
+    override fun cachedCanvas(song: Song): CanvasArtwork? = CanvasRepository.cached(song)
+
+    override suspend fun canvasFor(song: Song): CanvasArtwork? = CanvasRepository.canvasFor(song)
+
+    @Composable
+    override fun CanvasVideo(spec: CanvasVideoSpec, modifier: Modifier) = AndroidCanvasVideo(spec, modifier)
+
+    @Composable
+    override fun rememberRemoteArtworkUrl(song: Song?): String? =
+        com.music.bitchord.ui.components.rememberRemoteArtworkUrl(song)
+
+    @Composable
+    override fun rememberFlowVideo(square: Boolean): CanvasArtwork? {
+        val context = LocalContext.current
+        return remember(context, square) {
+            val raw = if (square) R.raw.flow_square else R.raw.flow
+            CanvasArtwork(
+                url = "android.resource://${context.packageName}/$raw",
+                title = "Flow",
+            )
+        }
+    }
+
+    // Lazy, all three: the player is not the first thing the process does, and
+    // none of these objects should be woken for a launch that never opens it.
+    override val volume: SystemVolume by lazy { CastAwareVolume(MusicStreamVolume(app), scope) }
+
+    // The queue's search. The phone is the platform that has both halves of
+    // it: a catalogue to ask and a device to look in.
+    override val queueSearchAvailable: Boolean get() = true
+
+    override suspend fun queueSuggestions(
+        song: Song,
+        mode: QueueSuggestion,
+    ): List<Song> {
+        // What the three questions are answered with, in order of how directly
+        // the catalogue can answer them.
+        val answers = when (mode) {
+            // The radio built from this track: exactly the list a listener
+            // means by "more like this", and the same one AutoPlay reads.
+            //
+            // One algorithm, whichever catalogue the listener browses: YouTube
+            // Music's radio. A track that carries no YouTube id — a Spotify
+            // row, a module's own recording — is matched to something YouTube
+            // carries first, so it still starts a station that knows what to
+            // play next.
+            QueueSuggestion.SIMILAR -> runCatching {
+                val seed = youtubeSeedFor(song) ?: return@runCatching emptyList()
+                YtMusicRepository.radio(seed).getOrNull()
+            }.getOrNull().orEmpty()
+
+            // The artist's own page when the row knew who they are, and a
+            // search by name when it did not — a row from a playlist or a home
+            // card frequently carries neither id.
+            QueueSuggestion.ARTIST -> runCatching {
+                val page = song.artistId?.let { YtMusicRepository.artistPage(it).getOrNull() }
+                page?.songs.orEmpty().ifEmpty {
+                    YtMusicRepository.search(song.artist, SearchFilter.SONGS).getOrNull()
+                        .orEmpty()
+                        .mapNotNull { row -> songOf(row) }
+                        .filter { it.artist.contains(song.artist, ignoreCase = true) }
+                }
+            }.getOrNull().orEmpty()
+
+            // The record, by its own browse id when the row carried one — which
+            // is the album page itself, not a search that might land on a
+            // compilation with the same name.
+            QueueSuggestion.ALBUM -> runCatching {
+                val id = song.albumId
+                val page = id?.takeIf { it.startsWith("MPREb") }?.let {
+                    YtMusicRepository.browseSongs(it).getOrNull()
+                }
+                page?.songs.orEmpty().ifEmpty {
+                    val album = song.albumName
+                    if (album.isNullOrBlank()) {
+                        emptyList()
+                    } else {
+                        YtMusicRepository.search("$album ${song.artist}", SearchFilter.SONGS)
+                            .getOrNull()
+                            .orEmpty()
+                            .mapNotNull { row -> songOf(row) }
+                            .filter { it.albumName.equals(album, ignoreCase = true) }
+                    }
+                }
+            }.getOrNull().orEmpty()
+        }
+        return QueueSearch.suggestions(answers, mode, seed = song)
+    }
+
+    /** One search row as a song, for the rows that are songs at all. */
+    private fun songOf(row: SearchResult): Song? = when (row) {
+        is SearchResult.TopTrack -> row.song
+        is SearchResult.Track -> row.song
+        is SearchResult.Browse -> null
+    }
+
+    override suspend fun searchQueueSongs(query: String): QueueSearchResult {
+        val term = query.trim()
+        if (term.isEmpty()) return QueueSearchResult(emptyList())
+        // The device's own songs first. They are instant — the record is
+        // already in memory — and they are the ones that play with no network,
+        // so a downloaded track is the row the listener gets rather than a
+        // second row for the same recording.
+        val local = QueueSearch.localMatches(Downloads.snapshotSongs(), term)
+        // The catalogue. A refused search is not a search that found nothing,
+        // and the screen says which of the two happened: on a train the first
+        // is the answer, with the downloaded songs underneath it.
+        val online = runCatching { YtMusicRepository.search(term, SearchFilter.SONGS) }.getOrNull()
+        val songs = online?.getOrNull().orEmpty().mapNotNull { row ->
+            when (row) {
+                is SearchResult.TopTrack -> row.song
+                is SearchResult.Track -> row.song
+                is SearchResult.Browse -> null
+            }
+        }
+        return QueueSearchResult(
+            songs = QueueSearch.merge(local, songs),
+            catalogueUnavailable = online?.isFailure == true,
+        )
+    }
+
+    @Composable
+    override fun rememberAudioOutputs(): List<AudioOutputDevice> {
+        val outputs = rememberAndroidAudioOutputs()
+        val cast by CastController.state.collectAsStateWithLifecycle()
+        // While a receiver is the speaker no output of this phone is the one
+        // playing, so none of them is lit; the Cast row is.
+        return if (cast.casting) outputs.map { it.copy(isActive = false) } else outputs
+    }
+
+    @Composable
+    override fun rememberOutputPicker(onOpen: () -> Unit): () -> Unit = rememberAndroidOutputPicker(onOpen)
+
+    override fun selectAudioOutput(id: Int?) {
+        // Picking an output of this phone is picking this phone: the receiver
+        // is let go of, and the music carries on here if it was playing.
+        if (CastController.state.value.casting) CastController.disconnect(resumeHere = true)
+        AudioRouting.select(id)
+    }
+
+    override val outputFormat: StateFlow<OutputFormatUi> by lazy {
+        AudioOutputStatus.current
+            .map { it.toOutputFormat() }
+            .stateIn(scope, SharingStarted.Eagerly, AudioOutputStatus.current.value.toOutputFormat())
+    }
+
+    override val party: StateFlow<PartyUi> by lazy {
+        ListenTogether.state
+            .map { it.toPartyUi() }
+            .stateIn(scope, SharingStarted.Eagerly, ListenTogether.state.value.toPartyUi())
+    }
+
+    override suspend fun translateLyrics(
+        trackId: String,
+        lines: List<LyricLine>,
+        targetLanguageTag: String,
+    ): LyricsTranslationResult =
+        when (val result = LyricsTranslation.translate(trackId, lines, targetLanguageTag)) {
+            is LyricsTranslation.Result.Translated -> LyricsTranslationResult.Translated(result.lines)
+            is LyricsTranslation.Result.SameLanguage -> LyricsTranslationResult.SameLanguage(result.language)
+            LyricsTranslation.Result.Unavailable -> LyricsTranslationResult.Unavailable
+        }
+
+    override suspend fun romanizeLyrics(
+        trackId: String,
+        lines: List<LyricLine>,
+        targetLanguageTag: String,
+    ): LyricsRomanizationResult =
+        when (val result = LyricsTranslation.romanize(trackId, lines, targetLanguageTag)) {
+            is LyricsTranslation.RomanizationResult.Romanized -> LyricsRomanizationResult.Romanized(result.lines)
+            LyricsTranslation.RomanizationResult.AlreadyRomanized -> LyricsRomanizationResult.AlreadyRomanized
+            LyricsTranslation.RomanizationResult.Unavailable -> LyricsRomanizationResult.Unavailable
+        }
+
+    override fun showMessage(message: String) {
+        main.post { Toast.makeText(app, message, Toast.LENGTH_SHORT).show() }
+    }
+
+    override val castState: StateFlow<CastUi> by lazy {
+        CastController.ensureStarted(app)
+        CastController.state
+            .map { CastUi(supported = it.supported, connectedName = it.connectedName, connecting = it.connecting) }
+            .stateIn(scope, SharingStarted.Eagerly, CastUi())
+    }
+
+    @Composable
+    override fun CastDialog(hazeState: HazeState, onDismiss: () -> Unit) =
+        com.music.bitchord.ui.components.CastDialog(hazeState = hazeState, onDismiss = onDismiss)
+
+    @Composable
+    override fun AudioPipelineDialog(hazeState: HazeState, isPlaying: Boolean, onDismiss: () -> Unit) =
+        com.music.bitchord.ui.components.AudioPipelineDialog(
+            hazeState = hazeState,
+            onDismiss = onDismiss,
+            isPlaying = isPlaying,
+        )
+
+    // The phone is the platform that can turn picked lyrics into a picture: a
+    // bitmap, a canvas, the gallery and the chooser are all Android's here. The
+    // desktop has no answer to it, so it never sees the pick mode at all.
+    override val lyricsShareAvailable: Boolean get() = true
+
+    @Composable
+    override fun LyricsShareSheet(
+        hazeState: HazeState,
+        request: LyricsShareRequest,
+        onDismiss: () -> Unit,
+    ) = AndroidLyricsShareSheet(hazeState = hazeState, request = request, onDismiss = onDismiss)
+}
+
+private fun AudioOutputStatus.Snapshot.toOutputFormat(): OutputFormatUi {
+    val encoding = AudioOutputStatus.encodingLabel(this)
+    val rate = actualSampleRateHz?.takeIf { it > 0 }
+    val summary = if (rate == null) {
+        encoding
+    } else {
+        "$encoding · ${"%.1f".format(Locale.ROOT, rate / 1000f).removeSuffix(".0")} kHz"
+    }
+    // What the route is *capable* of, read off the negotiated AudioTrack.
+    val carriesHiRes = when (actualEncoding) {
+        AudioFormat.ENCODING_PCM_24BIT_PACKED,
+        AudioFormat.ENCODING_PCM_32BIT,
+        AudioFormat.ENCODING_PCM_FLOAT,
+        -> true
+        else -> (actualSampleRateHz ?: 0) > 48_000
+    }
+    return OutputFormatUi(summary = summary, carriesHiRes = carriesHiRes)
+}
+
+private fun ListenTogether.State.toPartyUi() = PartyUi(
+    inParty = inParty,
+    controlsLocked = controlsLocked,
+    members = members,
+    you = you,
+    code = code,
+)
+
+/**
+ * The volume bar's level: the receiver's while the music is on one, the music
+ * stream's otherwise. The two are different numbers on different devices, and
+ * the bar must never show one while moving the other.
+ */
+private class CastAwareVolume(
+    private val system: SystemVolume,
+    scope: CoroutineScope,
+) : SystemVolume {
+    override val level: StateFlow<Float> = combine(
+        system.level,
+        CastController.volume,
+        CastController.state.map { it.casting },
+    ) { phone, receiver, casting -> if (casting) receiver else phone }
+        .stateIn(scope, SharingStarted.Eagerly, system.level.value)
+
+    override fun set(level: Float) {
+        if (CastController.state.value.casting) CastController.setVolume(level) else system.set(level)
+    }
+
+    override fun refresh() = system.refresh()
+}
+
+/**
+ * The music stream's volume. Hardware keys and the system panel change it
+ * behind the app's back, so Settings is watched and the level follows.
+ *
+ * The system's reading is only taken as the truth when it *is* the truth.
+ * Android pins the media stream at maximum when a USB DAC attaches — the
+ * DAC is expected to do the attenuating — and adopting that pinned reading
+ * is what slammed the level to full on every attach. While a USB output is
+ * attached the app's own level stands instead; see
+ * [ListenerVolumePolicy.systemReadIsPinned].
+ */
+private class MusicStreamVolume(private val context: Context) : SystemVolume {
+    private val manager = context.getSystemService(AudioManager::class.java)
+    private val _level = MutableStateFlow(initialLevel())
+    override val level: StateFlow<Float> = _level.asStateFlow()
+
+    init {
+        context.contentResolver.registerContentObserver(
+            Settings.System.CONTENT_URI,
+            true,
+            object : ContentObserver(Handler(Looper.getMainLooper())) {
+                override fun onChange(selfChange: Boolean) = refresh()
+            },
+        )
+    }
+
+    private fun max(): Int = manager?.getStreamMaxVolume(AudioManager.STREAM_MUSIC)?.coerceAtLeast(1) ?: 15
+
+    private fun read(): Float = MediaVolumeProbe.levelOf(manager)
+
+    /**
+     * The level to start with: the system's, unless the system is pinning
+     * it, in which case the app's own remembered level is the one the
+     * listener chose.
+     */
+    private fun initialLevel(): Float {
+        val system = read()
+        val pinned = ListenerVolumePolicy.systemReadIsPinned(
+            systemGain = system,
+            usbAttached = MediaVolumeProbe.usbOutputAttached(manager),
+            appLevel = AppSettings.playerVolume.value,
+        )
+        if (pinned) {
+            // Android is holding the media stream at maximum, so the level
+            // the app remembers is the one the listener chose. Writing it
+            // back keeps the two as close together as Android lets them:
+            // where the route takes the stream volume, the mixer will then
+            // cut by the level the bar is showing.
+            val level = AppSettings.playerVolume.value
+            manager?.setStreamVolume(
+                AudioManager.STREAM_MUSIC,
+                (level * max()).roundToInt(),
+                0,
+            )
+            return level
+        }
+        AppSettings.setPlayerVolume(system)
+        return system
+    }
+
+    override fun set(level: Float) {
+        val target = level.coerceIn(0f, 1f)
+        // The audio path reads this: with the mixer bypassed the system
+        // volume cuts nothing, and the app has to cut the sound itself.
+        AppSettings.setPlayerVolume(target)
+        manager?.setStreamVolume(AudioManager.STREAM_MUSIC, (target * max()).roundToInt(), 0)
+        // Published here as well, because not every change to this level
+        // comes from the system: the hardware keys are answered by the app
+        // itself on a bit-perfect route — see [HardwareVolume] — and on a USB
+        // route the system does not report its own change back (Android pins
+        // the media stream at maximum there), so the bar would not move.
+        _level.value = target
+    }
+
+    override fun refresh() {
+        // A hardware key or the system panel moved the level: the audio path
+        // has to hear about it too.
+        val system = read()
+        val pinned = ListenerVolumePolicy.systemReadIsPinned(
+            systemGain = system,
+            usbAttached = MediaVolumeProbe.usbOutputAttached(manager),
+            appLevel = AppSettings.playerVolume.value,
+        )
+        if (pinned) {
+            // Android's own pin, not the listener's choice: the app's level
+            // stands, and the bar keeps showing it.
+            _level.value = AppSettings.playerVolume.value
+            return
+        }
+        AppSettings.setPlayerVolume(system)
+        _level.value = system
+    }
+}
