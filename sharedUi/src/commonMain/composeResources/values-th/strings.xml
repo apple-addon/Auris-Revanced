@@ -1,0 +1,306 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="analysis_complete">วิเคราะห์แล้ว</string>
+    <string name="analysis_in_progress">กำลังวิเคราะห์…</string>
+    <string name="analysis_refining">วิเคราะห์แล้ว กำลังปรับแต่ง…</string>
+    <string name="audio_output">Audio output</string>
+    <string name="audio_output_playing">Playing here</string>
+    <string name="audio_pipeline">Audio Pipeline</string>
+    <string name="automix_analysis_menu">การวิเคราะห์ Automix</string>
+    <string name="automix_analysis_status">Automix · เพลงนี้: %1$s · ถัดไป: %2$s</string>
+    <string name="automix_bars_auto">อัตโนมัติ</string>
+    <string name="automix_bpm">%1$d BPM</string>
+    <string name="automix_choice_auto">อัตโนมัติ</string>
+    <string name="automix_choice_none">ไม่มี</string>
+    <string name="automix_cue_at">จุดเริ่ม %1$s</string>
+    <string name="automix_effect_echo_out">หางเสียงสะท้อน</string>
+    <string name="automix_eq_air">โปร่ง</string>
+    <string name="automix_eq_bright">สว่าง</string>
+    <string name="automix_eq_dark">ทึม</string>
+    <string name="automix_eq_flat">เรียบ</string>
+    <string name="automix_eq_warm">อบอุ่น</string>
+    <string name="automix_filter_bass_handoff">ส่งต่อเบส</string>
+    <string name="automix_filter_sweep">สวีป</string>
+    <string name="automix_handoff_at">ส่งต่อที่ %1$s</string>
+    <string name="automix_key">คีย์ %1$s</string>
+    <string name="automix_keys_clash">คีย์ไม่เข้ากัน</string>
+    <string name="automix_keys_compatible">คีย์เข้ากัน</string>
+    <string name="automix_legend_handoff">จุดส่งต่อ</string>
+    <string name="automix_next_facts">ถัดไป: %1$s</string>
+    <string name="automix_overlap_seconds">ทับซ้อน %1$s</string>
+    <string name="automix_panel_next">ถัดไป: %1$s</string>
+    <string name="automix_panel_no_next">ไม่มีเพลงต่อในคิว</string>
+    <string name="automix_panel_partial">เฉพาะช่วงเปิด</string>
+    <string name="automix_panel_presets">พรีเซ็ต</string>
+    <string name="automix_panel_waiting">กำลังรอการวิเคราะห์</string>
+    <string name="automix_planned_bars">%1$d ห้อง</string>
+    <string name="automix_preset_auto">อัตโนมัติ</string>
+    <string name="automix_preset_custom">กำหนดเอง</string>
+    <string name="automix_preset_fade">เฟด</string>
+    <string name="automix_preview">ตัวอย่าง</string>
+    <string name="automix_preview_stop">หยุด</string>
+    <string name="automix_reset">รีเซ็ต</string>
+    <string name="automix_row_automix">Automix สำหรับเพลงนี้</string>
+    <string name="automix_row_beatmatch">จับจังหวะให้ตรงกัน</string>
+    <string name="automix_row_blend">การผสม</string>
+    <string name="automix_row_effects">เอฟเฟกต์</string>
+    <string name="automix_row_eq">อีควอไลเซอร์</string>
+    <string name="automix_row_filter">ฟิลเตอร์</string>
+    <string name="automix_row_overlap">การทับซ้อน</string>
+    <string name="automix_row_volume">ระดับเสียง</string>
+    <string name="automix_scrub_hint">ลากกล่องเพื่อย้าย · ลากขอบเพื่อยืดหรือหด · ลากเลนล่างเพื่อเลื่อน</string>
+    <string name="automix_style_dj_blend">มิกซ์ DJ</string>
+    <string name="automix_style_dj_filter">การส่งต่อแบบกรอง</string>
+    <string name="automix_style_equal_power">เฟดกำลังเท่ากัน</string>
+    <string name="automix_style_gapless">ไม่มีช่องว่าง</string>
+    <string name="automix_not_supported_video">Automix ไม่รองรับเพลงแบบวิดีโอ</string>
+    <string name="automix_stopped_in_party">Automix: หยุดทำงานขณะฟังด้วยกัน</string>
+    <string name="automix_tempo_match">%1$d → %2$d BPM</string>
+    <string name="automix_vocal_overlap">เสียงร้องทับซ้อน %1$d%%</string>
+    <string name="automix_volume_fade_in">เฟดเข้า</string>
+    <string name="automix_volume_fade_out">เฟดออก</string>
+    <string name="automix_volume_fast_in">เฟดเข้าเร็ว</string>
+    <string name="automix_volume_fast_out">เฟดออกเร็ว</string>
+    <string name="automix_volume_slam">สแลม</string>
+    <string name="autoplay">AutoPlay</string>
+    <string name="autoplay_empty_description">เพลงที่คล้ายกันจะเล่นต่อไปเรื่อย ๆ</string>
+    <string name="autoplay_off">ปิด AutoPlay</string>
+    <string name="autoplay_on">เปิด AutoPlay</string>
+    <string name="autoplay_queue_description">เพลงที่คล้ายกัน เลือกไว้ให้เล่นต่อไป</string>
+    <string name="bit_depth">%1$d บิต</string>
+    <string name="cancel">ยกเลิก</string>
+    <string name="cast">Cast</string>
+    <string name="cast_casting">Casting</string>
+    <string name="cast_connecting">Connecting…</string>
+    <string name="cast_row_subtitle">Chromecast and Google Cast speakers</string>
+    <string name="channel_count">%1$d ช่อง</string>
+    <string name="choose_lyrics_provider">เลือกผู้ให้บริการเนื้อเพลง</string>
+    <string name="clear">ล้าง</string>
+    <string name="close_lyrics">ปิดเนื้อเพลง</string>
+    <string name="close_player">ปิดเครื่องเล่น</string>
+    <string name="playing_from_label">กำลังเล่นจาก</string>
+    <string name="played_by_label">เล่นโดย</string>
+    <string name="data_saver">Data-Saver</string>
+    <string name="decrease_lyrics_offset">Decrease lyrics offset</string>
+    <string name="downgraded_from">↓ จาก %1$s</string>
+    <string name="drag_to_reorder">ลากเพื่อจัดลำดับใหม่</string>
+    <string name="failed">ล้มเหลว</string>
+    <string name="hi_res_lossless">Hi-Res ไม่สูญเสียคุณภาพ</string>
+    <string name="high_quality">คุณภาพสูง</string>
+    <string name="high_quality_upgrading">คุณภาพสูง กำลังอัปเกรด</string>
+    <string name="increase_lyrics_offset">Increase lyrics offset</string>
+    <string name="instrumental">บรรเลง</string>
+    <string name="like">ถูกใจ</string>
+    <string name="listen_together">ฟังด้วยกัน</string>
+    <string name="listen_together_away">ไม่อยู่ — ที่นั่งยังถูกจองไว้</string>
+    <string name="listen_together_host">เจ้าของปาร์ตี้</string>
+    <string name="listen_together_in_party">อยู่ในปาร์ตี้ · %1$s</string>
+    <string name="listen_together_jam">แจมของ %1$s</string>
+    <string name="listen_together_jam_unnamed">กำลังฟังด้วยกัน</string>
+    <string name="listen_together_manage">จัดการ</string>
+    <string name="listen_together_open">ฟังด้วยกัน</string>
+    <string name="listen_together_open_count">กำลังฟังด้วยกัน · %1$d</string>
+    <string name="listen_together_you">คุณ</string>
+    <string name="mixing">กำลังมิกซ์</string>
+    <string name="lossless">ไม่สูญเสียคุณภาพ</string>
+    <string name="lyrics_already_in_language">เนื้อเพลงนี้เป็นภาษา %1$s อยู่แล้ว</string>
+    <string name="lyrics_already_romanized">เนื้อเพลงนี้ใช้อักษรละตินอยู่แล้ว</string>
+    <string name="lyrics_by">เนื้อเพลงโดย %1$s</string>
+    <string-array name="lyrics_intro_lines">
+        <item>จังหวะกำลังจะมา</item>
+        <item>เพลงกำลังเริ่ม</item>
+        <item>กำลังวอร์มอัพ</item>
+        <item>กำลังปรับอารมณ์</item>
+        <item>เบสมาก่อน คำร้องตามหลัง</item>
+        <item>รอสักครู่</item>
+        <item>สัมผัสจังหวะที่กำลังไต่ระดับ</item>
+        <item>ตอนนี้มีแค่ทำนอง</item>
+        <item>ท่อนฮุกกำลังจะมา</item>
+        <item>ปล่อยให้มันไหลลื่น</item>
+        <item>เตรียมพร้อมสำหรับเสียงร้อง</item>
+        <item>โน้ตแรกมาแล้ว</item>
+    </string-array>
+    <string-array name="lyrics_loading_lines">
+        <item>กำลังดึงเนื้อเพลง</item>
+        <item>กำลังหาคำร้อง</item>
+        <item>กำลังดึงท่อนเพลง</item>
+        <item>เนื้อเพลงกำลังโหลด</item>
+        <item>กำลังตรวจสอบแผ่นเนื้อเพลง</item>
+        <item>กำลังค้นหาในสมุดเพลง</item>
+        <item>กำลังจัดเรียงเนื้อเพลง</item>
+        <item>คำร้องกำลังจะมา</item>
+        <item>กำลังตรวจสอบคลังเก็บ</item>
+        <item>กำลังหาคำที่ถูกต้อง</item>
+        <item>เนื้อเพลงกำลังประกอบกัน</item>
+        <item>เกือบหาคำร้องเจอแล้ว</item>
+    </string-array>
+    <string name="lyrics_not_available">ไม่มีเนื้อเพลง</string>
+    <string name="lyrics_offset">Lyrics offset</string>
+    <string name="lyrics_offset_description">Positive values show lyrics later</string>
+    <string name="lyrics_offset_reset">Reset</string>
+    <string name="lyrics_provider_current">ผู้ให้บริการปัจจุบัน</string>
+    <string name="lyrics_provider_fetching">กำลังดึงเนื้อเพลง…</string>
+    <string name="lyrics_provider_found">พบเนื้อเพลง · แตะเพื่อใช้</string>
+    <string name="lyrics_provider_not_fetched">แตะเพื่อดึงข้อมูล</string>
+    <string name="lyrics_provider_not_found">ไม่พบเนื้อเพลง</string>
+    <string name="lyrics_provider_needs_setting">ต้องใช้ %1$s</string>
+    <string name="lyrics_romanization_unavailable">ไม่สามารถแปลงเนื้อเพลงนี้เป็นอักษรโรมันได้</string>
+    <string name="lyrics_romanized">คำอ่านแบบอักษรโรมัน</string>
+    <string name="lyrics_saved_with_download">บันทึกเนื้อเพลงไว้พร้อมกับไฟล์ที่ดาวน์โหลดนี้</string>
+    <string name="lyrics_share_pick_limit">การ์ดเต็มแล้ว</string>
+    <string name="lyrics_translated_to">แปลเป็น %1$s แล้ว</string>
+    <string name="lyrics_translation_unavailable">ใช้งานการแปลไม่ได้ในขณะนี้</string>
+    <string name="medium_quality">Medium Quality</string>
+    <string name="mono">โมโน</string>
+    <string name="more">เพิ่มเติม</string>
+    <string name="next_from">ถัดไปจาก: %1$s</string>
+    <string name="next_in_queue">ถัดไปในคิว</string>
+    <string name="no_lyrics_for_track">ไม่มีเนื้อเพลงสำหรับแทร็กนี้</string>
+    <string name="no_lyrics_found">ไม่พบเนื้อเพลง</string>
+    <string name="now_playing">กำลังเล่น</string>
+    <string name="open_lyrics">Lyrics</string>
+    <string name="pause">หยุดชั่วคราว</string>
+    <string name="play">เล่น</string>
+    <string name="played_by">Played by %1$s</string>
+    <string name="playing_from">Playing from %1$s</string>
+    <string name="playing_radio">กำลังเล่นวิทยุ %1$s</string>
+    <string name="queue">คิว</string>
+    <string name="remove_from_liked">นำออกจากเพลงที่ถูกใจ</string>
+    <string name="remove_from_queue">นำออกจากคิว</string>
+    <string name="repeat_all">วนซ้ำทั้งหมด</string>
+    <string name="repeat_off">ปิดวนซ้ำ</string>
+    <string name="repeat_one">วนซ้ำเพลงเดียว</string>
+    <string name="romanize_lyrics">แสดงเนื้อเพลงเป็นอักษรโรมัน</string>
+    <string name="romanizing_lyrics">กำลังแปลงเนื้อเพลงเป็นอักษรโรมัน…</string>
+    <string name="show_original_lyrics">แสดงเนื้อเพลงต้นฉบับ</string>
+    <string name="shuffle_off">ปิดสุ่มเล่น</string>
+    <string name="shuffle_on">เปิดสุ่มเล่น</string>
+    <string name="stereo">สเตอริโอ</string>
+    <string name="translate_lyrics">แปลเนื้อเพลง</string>
+    <string name="translating_lyrics_to">กำลังแปลเป็น %1$s…</string>
+    <string name="up_next">กำลังจะเล่นต่อไป</string>
+    <string name="upgrading_quality">กำลังอัปเกรดคุณภาพ</string>
+    <string name="waiting">กำลังรอ</string>
+    <string name="widget_next">ถัดไป</string>
+    <string name="widget_previous">ก่อนหน้า</string>
+    <string name="wired_headphones">Wired headphones</string>
+    <string name="usb_audio">USB audio</string>
+    <string name="hdmi_output">HDMI</string>
+    <string name="personal_phone">%1$s’s Phone</string>
+    <string name="this_phone">This phone</string>
+    <string name="albums">อัลบั้ม</string>
+    <string name="artists">ศิลปิน</string>
+    <string name="card_plays_format">%1$s plays</string>
+    <string name="card_songs_format">%1$s songs</string>
+    <string name="card_views_format">%1$s views</string>
+    <string name="clear_search">ล้างการค้นหา</string>
+    <string name="downloaded">ดาวน์โหลดแล้ว</string>
+    <string name="explore">สำรวจ</string>
+    <string name="library">คลังเพลง</string>
+    <string name="library_sign_in_description">ลงชื่อเข้าใช้บัญชี Google เพื่อดูเพลงที่ถูกใจ เพลย์ลิสต์ และประวัติ YouTube Music ของคุณ</string>
+    <string name="new_playlist">เพลย์ลิสต์ใหม่</string>
+    <string name="on_device">ในอุปกรณ์</string>
+    <string name="personalized_recommendations">รับคำแนะนำที่ปรับให้เหมาะกับคุณ</string>
+    <string name="pinned">ปักหมุดแล้ว</string>
+    <string name="play_next">เล่นต่อไป</string>
+    <string name="playlist">เพลย์ลิสต์</string>
+    <string name="playlist_action">เพลย์ลิสต์</string>
+    <string name="playlists">เพลย์ลิสต์</string>
+    <string name="recent_search_edit">แก้ไข “%1$s”</string>
+    <string name="recent_search_remove">นำ “%1$s” ออกจากการค้นหาล่าสุด</string>
+    <string name="recent_searches">การค้นหาล่าสุด</string>
+    <string name="replay_subtitle">เพลง ศิลปิน อัลบั้ม และแนวเพลงยอดนิยมของคุณ</string>
+    <string name="retry">ลองใหม่</string>
+    <string name="saved_to_youtube_music">บันทึกลง YouTube Music แล้ว</string>
+    <string name="search">ค้นหา</string>
+    <string name="search_empty">ค้นหาเพลงหลายล้านเพลงบน YouTube Music</string>
+    <string name="search_hint">ศิลปิน เพลง เนื้อเพลง และอื่น ๆ</string>
+    <string name="selected">เลือกแล้ว</string>
+    <string name="share">แชร์</string>
+    <string name="shelf_artists_on_the_rise">Artists on the rise</string>
+    <string name="shelf_chart">Chart</string>
+    <string name="shelf_charts">Charts</string>
+    <string name="shelf_concerts">Concerts</string>
+    <string name="shelf_featured_playlists_for_you">Featured playlists for you</string>
+    <string name="shelf_for_you">For you</string>
+    <string name="shelf_forgotten_favorites">Forgotten favorites</string>
+    <string name="shelf_from_the_community">From the community</string>
+    <string name="shelf_from_your_library">From your library</string>
+    <string name="shelf_hits_today">Hits today</string>
+    <string name="shelf_listen_again">Listen again</string>
+    <string name="shelf_mixed_for_you">Mixed for you</string>
+    <string name="shelf_new_releases">New releases</string>
+    <string name="shelf_quick_picks">Quick picks</string>
+    <string name="shelf_recents">Recents</string>
+    <string name="shelf_recommended_music_videos">Recommended music videos</string>
+    <string name="shelf_shorts">Shorts</string>
+    <string name="shelf_similar_to">Similar to %1$s</string>
+    <string name="shelf_single">Single</string>
+    <string name="shelf_song_item">Song</string>
+    <string name="shelf_top_music_videos">Top music videos</string>
+    <string name="shelf_top_tunes_right_now">Top tunes right now</string>
+    <string name="shelf_trending">Trending</string>
+    <string name="shelf_trending_community_playlists">Trending community playlists</string>
+    <string name="shelf_youtube_charts">YouTube Charts</string>
+    <string name="show_all">แสดงทั้งหมด</string>
+    <string name="sign_in">ลงชื่อเข้าใช้</string>
+    <string name="sign_in_youtube_music">ลงชื่อเข้าใช้ YouTube Music</string>
+    <string name="subscriptions">Subscriptions</string>
+    <string name="switch_to_grid_view">สลับเป็นมุมมองกริด</string>
+    <string name="switch_to_list_view">สลับเป็นมุมมองรายการ</string>
+    <string name="your_replay">Replay ของคุณ</string>
+    <string name="your_listening_experience">ประสบการณ์การฟังของคุณ</string>
+    <string name="default_replay_holder">ผู้ฟัง Auris</string>
+    <string name="member_since">สมาชิกตั้งแต่</string>
+    <string name="import_spotify">นำเข้าจาก Spotify</string>
+    <string name="import_spotify_subtitle">จากลิงก์เพลย์ลิสต์</string>
+    <string name="search_library_empty">ค้นหาเพลงในโฟลเดอร์เพลงในเครื่องของคุณ</string>
+    <string name="search_library_hint">เพลง ศิลปิน และอัลบั้ม</string>
+    <string name="search_library_no_results">ไม่มีอะไรในเพลงในเครื่องตรงกับ “%1$s”</string>
+    <string name="sing_lyrics_button">Sing along, with vocals lowered</string>
+    <string name="spatial_audio_title">Spatial audio</string>
+    <string name="spatial_audio_on_subtitle">Stereo widening is on</string>
+    <string name="spatial_audio_off_subtitle">Widen stereo tracks for a more immersive feel</string>
+    <string name="new_folder">โฟลเดอร์ใหม่</string>
+    <string name="folders">โฟลเดอร์</string>
+    <string name="home_load_more">โหลดเพิ่ม</string>
+    <string name="automix_fetching">กำลังโหลดเสียง…</string>
+    <string name="automix_fetching_percent">กำลังโหลดเสียง… %1$d%%</string>
+    <string name="add_to_queue">เพิ่มลงคิว</string>
+    <string name="queue_search_back">ย้อนกลับ</string>
+    <string name="queue_search_title">เพิ่มเพลง</string>
+    <string name="queue_search_hint">ค้นหาเพลง</string>
+    <string name="queue_search_start">ค้นหาเพลงเพื่อเพิ่มลงคิว</string>
+    <string name="queue_search_no_results">ไม่พบเพลง</string>
+    <string name="queue_search_offline">แสดงเพลงที่ดาวน์โหลดไว้</string>
+    <string name="queue_search_added">เพิ่มลงคิวแล้ว</string>
+    <string name="queue_search_will_play">จะเล่นถัดไป</string>
+    <string name="queue_suggest_similar">คล้ายกัน</string>
+    <string name="queue_suggest_artist">จากศิลปิน</string>
+    <string name="queue_suggest_album">จากอัลบั้ม</string>
+    <string name="queue_search_nothing_here">ยังไม่มีอะไรที่นี่</string>
+    <string name="dismiss">Dismiss</string>
+    <string name="sign_in_dismiss_title">Hide sign-in prompt?</string>
+    <string name="sign_in_dismiss_message">Without signing in to YouTube Music you won't be able to like songs, and FLOW (the video in the Radio tab) stays unavailable. You can sign in again anytime from Settings.</string>
+    <string name="podcasts">Podcasts</string>
+    <string name="explore_hint">Moods and genres</string>
+    <string name="podcasts_empty">No podcasts yet. Follow a show on YouTube Music and it shows up here.</string>
+    <string name="your_shows">Your shows</string>
+    <string name="radio">Radio</string>
+    <string name="radio_featured">Auris Radio</string>
+    <string name="radio_featured_subtitle">Endless music picked for you</string>
+    <string name="radio_recent_seeds">Recently played</string>
+    <string name="radio_start_hint">Search for an artist, song or album</string>
+    <string name="radio_start_station">Start a station</string>
+    <string name="radio_stations">Stations for You</string>
+    <string name="replay">Replay</string>
+    <string name="search_podcasts">Search podcasts</string>
+    <string name="search_results">Results</string>
+    <string name="podcast_episodes_loading">Loading episodes…</string>
+    <string name="podcast_episodes_empty">No episodes in this feed.</string>
+    <string name="resume">Resume</string>
+    <string name="listened">Listened</string>
+    <string name="library_search_hint">Search this</string>
+    <string name="library_empty_segment">Nothing here yet</string>
+    <string name="home_chip_all">All</string>
+</resources>
