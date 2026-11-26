@@ -1,0 +1,19 @@
+<!--
+  Status-bar / notification variant of the Auris note mark.
+
+  Notification small icons are drawn as a silhouette: the system throws away
+  every colour and keeps only the alpha channel, so the black note PNG works
+  unchanged. It is a portrait 367x512 asset, so the layer scales it into a
+  17x24dp box (its own aspect ratio) inside the 24x24dp content box rather
+  than stretching it to a square.
+-->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item
+        android:width="17dp"
+        android:height="24dp"
+        android:gravity="center">
+        <bitmap
+            android:gravity="fill"
+            android:src="@drawable/ic_note" />
+    </item>
+</layer-list>

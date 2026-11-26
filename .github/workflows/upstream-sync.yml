@@ -1,0 +1,84 @@
+name: Sync upstream
+
+# Keeps this repository's code level with OreoMuncher45/Auris without anyone
+# touching a terminal: fetch the branch this fork tracks, merge it into main,
+# push. If the merge conflicts, main is left exactly as it was and an issue is
+# opened with the file list — a conflict needs a human decision, a clean merge
+# does not.
+#
+# Runs every three hours and on demand. The push uses GITHUB_TOKEN, which by
+# design does not trigger other workflows, so a sync never starts a build: the
+# APK lanes stay manual.
+on:
+  schedule:
+    - cron: "0 */3 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: upstream-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Merge upstream into main
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          # Full history: the merge-base test and the merge both need it.
+          fetch-depth: 0
+
+      - name: Merge upstream
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          UPSTREAM_REPO: OreoMuncher45/Auris
+          UPSTREAM_BRANCH: feature/automix-core-v2
+        run: |
+          set -euo pipefail
+
+          git config user.name "upstream-sync"
+          git config user.email "upstream-sync@users.noreply.github.com"
+
+          git remote add upstream "https://github.com/${UPSTREAM_REPO}.git"
+          git fetch --no-tags upstream "${UPSTREAM_BRANCH}"
+
+          target="$(git rev-parse FETCH_HEAD)"
+          echo "upstream ${UPSTREAM_BRANCH} = ${target}"
+
+          if git merge-base --is-ancestor "$target" HEAD; then
+            echo "::notice::Already level with ${UPSTREAM_REPO}@${target:0:7} — nothing to merge."
+            exit 0
+          fi
+
+          if git merge --no-edit "$target"; then
+            git push origin HEAD:main
+            echo "::notice::Merged ${UPSTREAM_REPO}@${target:0:7} into main."
+            exit 0
+          fi
+
+          # Conflict: put the tree back exactly as it was, then report. Never
+          # leave a half-merged main behind, and never force anything.
+          files="$(git diff --name-only --diff-filter=U | sed 's/^/- /')"
+          git merge --abort || true
+          git reset --hard HEAD
+          echo "::error::Upstream ${target:0:7} conflicts with this fork; main untouched."
+
+          title="Upstream sync conflict: ${target:0:7}"
+          existing="$(gh issue list --repo "$GITHUB_REPOSITORY" --state open \
+            --json title --jq '.[].title' || true)"
+          if printf '%s\n' "$existing" | grep -Fxq "$title"; then
+            echo "::notice::An open issue for this conflict already exists."
+            exit 1
+          fi
+
+          gh issue create --repo "$GITHUB_REPOSITORY" \
+            --title "$title" \
+            --body "$(printf 'Automatic sync stopped before touching main.\n\nUpstream `%s` @ `%s` conflicts with this fork in:\n\n%s\n\nResolve locally:\n\n```\ngit fetch upstream %s\ngit merge FETCH_HEAD\n# fix the files above, then\n git push origin HEAD:main\n```\n\nThe next scheduled run will retry and close nothing; merge this by hand or resolve the conflict and push.' \
+              "$UPSTREAM_REPO" "$target" "${files:-(no conflicted paths reported)}" "$UPSTREAM_BRANCH")"
+          exit 1

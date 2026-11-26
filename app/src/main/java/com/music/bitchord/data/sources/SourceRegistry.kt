@@ -1,0 +1,720 @@
+package com.music.bitchord.data.sources
+
+import android.content.Context
+import android.content.SharedPreferences
+import android.net.Uri
+import android.util.Log
+import com.music.bitchord.auth.EncryptedPrefs
+import com.music.bitchord.data.TrackLog
+import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.settings.permits
+import com.music.bitchord.data.sources.addon.AddonClient
+import com.music.bitchord.data.sources.addon.AddonException
+import com.music.bitchord.data.sources.addon.DetectedFormat
+import com.music.bitchord.data.sources.addon.SourceFormats
+import com.music.bitchord.data.sources.mornye.SflxHost
+import com.music.bitchord.data.settings.AudioQuality
+import com.music.bitchord.playback.audio.LosslessOutput
+import kotlinx.coroutines.flow.MutableStateFlow
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.builtins.ListSerializer
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonArray
+import java.util.UUID
+
+/**
+ * One configured source: which protocol, which index.
+ *
+ * Stored in encrypted prefs — [baseUrl] is a module index the user called
+ * "for my private use", not something to leave sitting in plain-text
+ * SharedPreferences on a device someone else might get into.
+ */
+@Serializable
+data class SourceConfig(
+    val id: String = UUID.randomUUID().toString(),
+    val kind: SourceKind,
+    /** What the user called it. Blank falls back to the server's host, or the kind's own label. */
+    val label: String = "",
+    val baseUrl: String = "",
+    /**
+     * Whether this is one of the sources this build ships, rather than one the
+     * listener pointed at.
+     *
+     * Only a stock row is a permanent part of the list: it wears the Auris
+     * name for its kind and cannot be removed. A source the listener added is
+     * theirs even when it speaks one of the built-in protocols — it keeps its
+     * own name (or its host), against stock-or-not, and the delete button
+     * works. Decoded as false by every config written before this existed;
+     * [SourceRegistry.sourcesForInit] then promotes exactly one row per
+     * built-in kind, so old duplicates become removable instead of staying
+     * indistinguishable from the bundled source.
+     */
+    val stock: Boolean = false,
+    /** JioSaavn is opt-in because catalogue matches can select the wrong recording. */
+    val enabled: Boolean = kind != SourceKind.JIOSAAVN,
+    /**
+     * Values the user entered for this addon's own settings, by setting key.
+     *
+     * Only credentials are editable — see the source editor — so in practice
+     * this holds keys, not preferences. Blank means unset and is not stored:
+     * the editor drops blank entries on save and the client falls back to the
+     * manifest default. Absent for every config written before this existed,
+     * which decode as empty and behave exactly as before.
+     */
+    val settings: Map<String, String> = emptyMap(),
+    /**
+     * The addon's `allowDownloads`, as its manifest last said. Stored rather
+     * than asked each time so the answer is there without a request — see
+     * [checkValidLossless] for why that matters.
+     */
+    val allowDownloads: Boolean = true,
+    /**
+     * The addon's `checkValidLossless`, as its manifest last said. Has to be
+     * stored: the promise is that a gated addon is not contacted at all while
+     * no lossless output is connected, and asking it for its manifest would
+     * already break that. Refreshed whenever the manifest is next read.
+     */
+    val checkValidLossless: Boolean = false,
+) {
+    /** Whether this source is shut out right now because it needs an output that isn't connected. */
+    val awaitsLosslessOutput: Boolean
+        get() = checkValidLossless && !LosslessOutput.capable
+
+    /**
+     * Why [awaitsLosslessOutput] is a notice and not an exclusion.
+     *
+     * This used to keep a lossless addon out of the walk entirely while the
+     * connected output could not carry lossless — a Bluetooth codec, usually.
+     * The listener's ceiling is a *preference about the stream*, and the
+     * device is a fact about the *output*; Android re-encodes on the way out
+     * either way. So the addon went silent, YouTube became the only source in
+     * the list, and `canSubstituteForYouTube` correctly reported that there
+     * was nothing better to ask — which is the whole of "it never upgrades
+     * when I'm on headphones". The setting said lossless, an addon that can
+     * serve lossless was turned on, and it was never asked.
+     *
+     * The sources screen still shows this state, now as the explanation it is.
+     */
+    val losslessOutputMissing: Boolean
+        get() = awaitsLosslessOutput
+
+    /** The two manifest switches, without the parts of the config the user set. */
+    internal fun withPolicyOf(other: SourceConfig) =
+        copy(allowDownloads = other.allowDownloads, checkValidLossless = other.checkValidLossless)
+
+    /** What the sources screen and the player show. Never blank. */
+    val displayName: String
+        get() {
+            // Only the rows this build seeded wear the Auris names. A link the
+            // listener pasted that happens to speak the same protocol is that
+            // listener's source, not ours: calling it "Auris Addon" claimed an
+            // addon this app does not run and made a user's own server
+            // indistinguishable from the bundled one.
+            val named = label.trim()
+            return named?.takeIf { it.isNotBlank() }
+                ?: baseUrl.takeIf { it.isNotBlank() }?.let(SourceRegistry::hostOf)
+                ?: kind.label
+        }
+
+    /** Whether this has enough filled in to be worth contacting at all. */
+    val isComplete: Boolean
+        get() = !kind.needsServer || baseUrl.isNotBlank()
+}
+
+/**
+ * The user's sources, always tried in the fixed order [SourceKind] declares:
+ * their own addons first, then JioSaavn, then YouTube Music.
+ *
+ * [SourceKind.YOUTUBE] is seeded on first run and cannot be deleted, but it can
+ * be switched off — it is the one source whose catalogue the app's own browsing
+ * is built on, so a "remove" would take away something the user could not then
+ * restore by typing anything in. Addons are entirely optional: with none
+ * configured, YouTube is the only active source on a fresh install. JioSaavn
+ * is present but off until the user accepts its catalogue-matching risk.
+ *
+ * Switching YouTube off is honoured for playback, not just for the row:
+ * everything enabled then ranks above it in the ordinary sense, and a track no
+ * other source has fails instead of quietly playing YouTube. See
+ * [SourceResolver][com.music.bitchord.data.sources.SourceResolver].
+ */
+object SourceRegistry {
+
+    private const val TAG = "BitChord"
+
+    private lateinit var prefs: SharedPreferences
+
+    private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
+
+    /** Every configured source, enabled or not. */
+    val configs = MutableStateFlow<List<SourceConfig>>(emptyList())
+
+    /**
+     * Built instances, keyed by config id, rebuilt whenever [configs] changes.
+     *
+     * Held rather than constructed per call so that a source with any warmed
+     * state — a module whose index has already been fetched — keeps it across
+     * tracks instead of re-probing on every resolve.
+     */
+    private var instances: Map<String, MusicSource> = emptyMap()
+
+    fun init(context: Context) {
+        // Same repair and degradation as AuthStore; see EncryptedPrefs.
+        prefs = EncryptedPrefs.open(context, "bitchord_sources", "bitchord_sources_plain")
+
+        val stored = prefs.getString(KEY_SOURCES, null)?.let(::decodeStored) ?: emptyList()
+        val jioOptInMigrationDone = prefs.getBoolean(KEY_JIOSAAVN_OPT_IN_V1, false)
+        val after = sourcesForInit(stored, forceJioSaavnOff = !jioOptInMigrationDone)
+
+        // Publish state and the migration marker in one preferences edit. If a
+        // process dies after recording the marker but before recording the
+        // disabled source, the next launch would otherwise believe the forced
+        // opt-out had already happened and silently restore the old on state.
+        publish(after, persist = false)
+        if (after != stored || !jioOptInMigrationDone) {
+            prefs.edit()
+                .putString(KEY_SOURCES, json.encodeToString(ListSerializer(SourceConfig.serializer()), after))
+                .putBoolean(KEY_JIOSAAVN_OPT_IN_V1, true)
+                .apply()
+        }
+    }
+
+    /**
+     * Built-in seeding and one-time source migrations, kept pure for tests.
+     *
+     * [forceJioSaavnOff] is true exactly once for every install that first runs
+     * this version, including upgrades whose stored config currently says on.
+     * Once the marker is written, a user who deliberately enables JioSaavn is
+     * left enabled on subsequent launches.
+     */
+    internal fun sourcesForInit(
+        stored: List<SourceConfig>,
+        forceJioSaavnOff: Boolean,
+    ): List<SourceConfig> {
+        // Seeded rather than persisted-on-first-write, so a build adding a new
+        // built-in kind picks it up for existing installs too. SourceConfig's
+        // default is the policy: JioSaavn off, everything else on.
+        val seeded = stored + BUILT_IN_KINDS
+            .filter { kind -> stored.none { it.kind == kind } }
+            .map { kind ->
+                SourceConfig(
+                    kind = kind,
+                    // JioSaavn arrives off after the forced opt-out migration.
+                    enabled = kind != SourceKind.JIOSAAVN,
+                    stock = true,
+                )
+            }
+
+        // The retired built-in module is removed, while a custom module entered
+        // by the user is preserved.
+        //
+        // And an *installed extension* is preserved too, which is the whole
+        // point of the exception: an extension's row is a `MODULE` row as
+        // well — it speaks the same protocol and is built by the same
+        // [ModuleSource] — and dropping every `MODULE` row here dropped the
+        // extensions with it. The row was then rebuilt from the installed
+        // package by [com.music.bitchord.data.sources.mornye.SflxCatalog], and
+        // a rebuilt row arrives with the default state, which is *on*.
+        //
+        // So every extension turned itself back on after every restart, and a
+        // listener who had switched one off to stop it being asked found it
+        // asking again the next morning.
+        //
+        // What is retired is the built-in module *index* this build no longer
+        // carries — a row pointing at a URL nothing serves any more. An
+        // extension points at `sflx://`, which is the app's own address for
+        // "the package that is installed", and that is a live source.
+        val migrated = seeded
+            .filterNot { it.kind == SourceKind.MODULE && !isExtension(it) }
+            .map { config ->
+                if (config.kind == SourceKind.JIOSAAVN && forceJioSaavnOff) {
+                    config.copy(enabled = false)
+                } else {
+                    config
+                }
+            }
+        return stampStock(migrated)
+    }
+
+    /**
+     * Marks exactly one shipped source per built-in kind as [SourceConfig.stock].
+     *
+     * Builds before the flag stored every row without it, and a listener could
+     * already have added a second row of a built-in kind by pasting a URL that
+     * answered the same protocol — the row that used to be stuck, branded and
+     * unremovable. Preference keeps history rather than rewriting it: an
+     * already-stamped row stays stock across launches, then whichever row came
+     * first. Every other row of that kind is left unstamped, so it is named
+     * after itself and the delete button works.
+     */
+    private fun stampStock(configs: List<SourceConfig>): List<SourceConfig> {
+        val stockIds = BUILT_IN_KINDS.mapNotNull { kind ->
+            configs.filter { it.kind == kind }
+                .let { candidates -> candidates.firstOrNull { it.stock } ?: candidates.firstOrNull() }
+                ?.id
+        }.toSet()
+        return configs.map { it.copy(stock = it.id in stockIds) }
+    }
+
+    /**
+     * Decodes a stored source list one entry at a time rather than as a
+     * single list, so one entry naming a kind this build no longer has —
+     * left over from before a kind was retired — doesn't take every other
+     * entry down with it. A strict `List<SourceConfig>` decode fails whole:
+     * one bad enum value and the user's real, working module config is
+     * silently gone along with it.
+     */
+    private fun decodeStored(raw: String): List<SourceConfig> {
+        val elements = runCatching { json.parseToJsonElement(raw).jsonArray }
+            .getOrElse { return emptyList() }
+        return elements.mapNotNull { element ->
+            runCatching { json.decodeFromJsonElement(SourceConfig.serializer(), element) }
+                .onFailure { TrackLog.w(TAG, "dropping unreadable stored source: ${it.message}") }
+                .getOrNull()
+        }
+    }
+
+    /**
+     * The enabled sources, module first and YouTube last, however they're stored.
+     *
+     * The user's standing choice and nothing else. Both playback and downloads
+     * start here, so disabling JioSaavn or an addon excludes it from both. A
+     * stream is budgeted further by [activeForPlayback]; downloads deliberately
+     * apply no connection-quality ceiling — see [SourceResolver.forDownload].
+     */
+    fun active(): List<MusicSource> =
+        enabledConfigs(configs.value)
+            .sortedBy { it.kind.rank }
+            .mapNotNull { instances[it.id] }
+
+    /**
+     * [active], minus the addons whose manifest said `allowDownloads: 0`. A
+     * download walks this instead, so the next source in line serves it.
+     */
+    fun activeForDownload(): List<MusicSource> =
+        active().filter { config(it.configId)?.allowDownloads != false }
+
+    /**
+     * Records what an addon's manifest said about downloads and lossless
+     * output, if it changed.
+     *
+     * Does not rebuild the source the way an edit does — see [configuredBy] —
+     * because nothing about where it points has changed, and this is called
+     * from inside that source's own requests.
+     */
+    fun updatePolicy(configId: String, allowDownloads: Boolean, checkValidLossless: Boolean) {
+        val current = config(configId) ?: return
+        if (current.allowDownloads == allowDownloads && current.checkValidLossless == checkValidLossless) return
+        TrackLog.d(
+            TAG,
+            "${current.displayName}: manifest now says allowDownloads=$allowDownloads " +
+                "checkValidLossless=$checkValidLossless",
+        )
+        publish(
+            configs.value.map {
+                if (it.id == configId) it.copy(allowDownloads = allowDownloads, checkValidLossless = checkValidLossless) else it
+            },
+        )
+    }
+
+    /** The common eligibility gate used by playback and download source walks. */
+    internal fun enabledConfigs(configs: List<SourceConfig>): List<SourceConfig> =
+        configs.filter { it.enabled && it.isComplete }
+
+    /**
+     * [active], minus the sources the ceiling on the connection in hand does
+     * not pay for — see [AudioQuality.permits].
+     *
+     * Every path that starts or plans a *stream* asks this rather than
+     * [active], so the Wi-Fi and mobile-data rungs stay two independent
+     * answers to "what does this minute cost" and switching networks switches
+     * between them. Downloads deliberately keep asking [active]: what a saved
+     * file is worth is [DownloadQuality][com.music.bitchord.data.settings.DownloadQuality]'s
+     * question, and when it may be fetched is
+     * [AppSettings.wifiOnlyDownloads][com.music.bitchord.data.settings.AppSettings.wifiOnlyDownloads]'s.
+     */
+    fun activeForPlayback(): List<MusicSource> {
+        val ceiling = AppSettings.effectiveAudioQuality
+        return active().filter { ceiling.permits(it.kind) }
+    }
+
+    fun instance(configId: String): MusicSource? = instances[configId]
+
+    fun config(configId: String): SourceConfig? = configs.value.firstOrNull { it.id == configId }
+
+    /**
+     * Drops completed addon track answers for an explicit quality retry.
+     *
+     * Empty responses are normally legitimate and cached, but an addon whose
+     * upstream was temporarily down can express that outage as HTTP 200 with
+     * no rows. The listener pressing "Upgrade quality" is an explicit request
+     * to ask again now, not to repeat that cached answer or a previously issued
+     * stream URL. In-flight calls stay shared so a quick second press cannot
+     * duplicate work already on the wire.
+     */
+    fun clearCompletedAddonTrackCalls() {
+        instances.values
+            .filterIsInstance<AddonSource>()
+            .forEach(AddonSource::clearCompletedTrackCalls)
+    }
+
+    // ── Editing ─────────────────────────────────────────────────────────
+
+    /**
+     * Adds a source the listener configured. Never stock: a pasted link is
+     * theirs, so it must stay removable and keep its own name however its
+     * protocol happens to be recognised.
+     */
+    fun add(config: SourceConfig) =
+        publish(configs.value + config.tidied().copy(stock = false))
+
+    /**
+     * Saves an edit. Stock-ness is not the editor's to set — it stays whatever
+     * the stored row already was, so editing a shipped source cannot turn a
+     * user's own row into a permanent one or the reverse.
+     */
+    fun update(config: SourceConfig) {
+        val current = config(config.id)
+        config.tidied().let { tidied ->
+            publish(configs.value.map { if (it.id == tidied.id) tidied.copy(stock = current?.stock ?: false) else it })
+        }
+    }
+
+    /**
+     * The config as it should be stored, rather than as it was typed.
+     *
+     * Only addons have anything to tidy, and only their URL: the two forms
+     * people paste — the addon's root and its `manifest.json` — address the
+     * same server, and storing them as typed makes two configs that behave
+     * identically look different on screen and compare unequal in
+     * [configuredBy], which would rebuild a warm source over a cosmetic edit.
+     * Normalising here rather than in the editor keeps it true for every caller
+     * and not just the one with a text field.
+     */
+    private fun SourceConfig.tidied(): SourceConfig =
+        if (kind == SourceKind.ADDON) copy(baseUrl = AddonClient.normalizeBase(baseUrl)) else this
+
+    fun remove(configId: String) {
+        val target = config(configId) ?: return
+        // Only a shipped row is permanent. Anything the listener added is
+        // theirs to delete, even when it speaks a built-in protocol — the old
+        // kind check is what left a pasted link stuck in the list forever.
+        if (target.stock) return
+        // YouTube is never removable whatever its flag: it is the only source
+        // that can supply a home feed, radio or related tracks, and nothing a
+        // listener types in could recreate it.
+        if (target.kind == SourceKind.YOUTUBE) return
+        publish(configs.value.filterNot { it.id == configId })
+    }
+
+    /**
+     * Turns one source on or off.
+     *
+     * YouTube obeys its switch like any other row. It used to ignore a request
+     * to disable it, on the reasoning that it is the only source that can
+     * supply a home feed, radio or related tracks and the full catalogue — and
+     * that still stops it being *removed*, because nothing a listener types in
+     * could recreate it. But "off" has a meaning that can be honoured without
+     * the catalogue: nothing plays from it. The resolver treats every enabled
+     * source as ranked above a switched-off YouTube, so an addon becomes the
+     * only answer for a stream, and a track none of them holds fails with that
+     * reason rather than falling back to Opus. The catalogue itself (search,
+     * home, radio) stays available; it is not a stream.
+     */
+    fun setEnabled(configId: String, enabled: Boolean) {
+        publish(configs.value.map { if (it.id == configId) it.copy(enabled = enabled) else it })
+    }
+
+    /**
+     * Whether YouTube Music may serve a stream right now.
+     *
+     * Read by the playback and download paths, which otherwise have no reason
+     * to know that the row exists: YouTube is reached directly through
+     * [StreamResolver][com.music.bitchord.data.innertube.StreamResolver], not
+     * through [active], so a switch on it would be invisible to every one of
+     * those paths without this.
+     */
+    fun youtubeEnabled(): Boolean =
+        configs.value.any { it.kind == SourceKind.YOUTUBE && it.enabled }
+
+    /**
+     * Whether YouTube may be asked for the bytes Automix's *analysis* reads.
+     *
+     * Deliberately not [youtubeEnabled], and the difference is the whole point.
+     *
+     * [youtubeEnabled] is about what the listener **hears**: it decides
+     * whether a stream may be served from YouTube at all, and switching it
+     * off is a promise that no byte of YouTube reaches the speaker.
+     *
+     * The analysis is not a performance. It fetches a copy of its own, under a
+     * marker that playback never sends
+     * ([com.music.bitchord.playback.smart.AutomixAnalysisSource]), and reads
+     * it to measure a tempo; not one of its bytes is ever played. And it has
+     * to keep working when YouTube is switched off, because otherwise every
+     * Automix panel opens on "Waiting for analysis" — the one thing that
+     * could have answered it was the very thing the listener had turned off,
+     * and the panel sits there waiting for a fetch that was never allowed to
+     * start. That is the bug this exists to end.
+     *
+     * So the source switch does not reach here. What does: the listener's own
+     * Automix switch, read where the work is queued rather than here, so that
+     * turning Automix off still stops every byte being fetched.
+     *
+     * The answer is "yes" whenever the YouTube row is there, and the row is
+     * never removable — see [remove] — so this is the reachability of
+     * YouTube, not a preference.
+     */
+    fun youtubeAnalysisEnabled(): Boolean =
+        configs.value.any { it.kind == SourceKind.YOUTUBE }
+
+    /**
+     * Puts the addons in [orderedIds], which is the order they will be asked in.
+     *
+     * The stored list *is* the priority order and needs no rank field to carry
+     * it: [active] sorts by [SourceKind.ordinal] and Kotlin's sort is stable,
+     * so two sources of the same kind keep the order they are held in here.
+     * Writing a rank alongside would be a second source of truth for a fact the
+     * list already states, and the two would drift the first time one was
+     * written without the other.
+     *
+     * Ids that name nothing are dropped and addons the caller forgot to mention
+     * are appended, so a list that has moved on since the drag started — an
+     * addon removed on another screen, say — reorders what it can rather than
+     * deleting the rest. Everything that is not an addon keeps its place, since
+     * its rank is decided by its kind and is not the user's to set.
+     */
+    fun reorderAddons(orderedIds: List<String>) {
+        val addons = configs.value.filter { it.kind.isUserAdded }
+        if (addons.size < 2) return
+        val byId = addons.associateBy { it.id }
+        val moved = orderedIds.mapNotNull(byId::get)
+        val missed = addons.filterNot { config -> moved.any { it.id == config.id } }
+        val reordered = moved + missed
+        if (reordered.map { it.id } == addons.map { it.id }) return
+        publish(reordered + configs.value.filterNot { it.kind.isUserAdded })
+    }
+
+    /**
+     * Puts the installed extensions in [orderedIds], which is the order they
+     * will be asked in.
+     *
+     * A sibling of [reorderAddons] rather than the same function, because the
+     * two reorder different things in different ways. An addon is moved to the
+     * front of the list, since its whole kind ranks below everything the app
+     * ships. An extension is a `MODULE`-kind source living in the middle of the
+     * list, so it is moved *within its own group* and everything else keeps its
+     * place — otherwise dragging an extension would silently re-rank the
+     * addons, the modules and the built-ins against each other, which is not
+     * what the drag asked for and not visible on the screen it happened on.
+     */
+    fun reorderExtensions(orderedIds: List<String>) {
+        val extensions = configs.value.filter { isExtension(it) }
+        if (extensions.size < 2) return
+        val byId = extensions.associateBy { it.id }
+        val moved = orderedIds.mapNotNull(byId::get)
+        val missed = extensions.filterNot { config -> moved.any { it.id == config.id } }
+        val order = moved + missed
+        if (order.map { it.id } == extensions.map { it.id }) return
+        // Rebuilt by walking the whole list in order and taking the next
+        // extension from the new order wherever an extension used to be.
+        val next = order.iterator()
+        val rebuilt = configs.value.map { config ->
+            if (isExtension(config) && next.hasNext()) next.next() else config
+        }
+        publish(rebuilt)
+    }
+
+    /** Whether [config] is one row per installed extension rather than one per index. */
+    private fun isExtension(config: SourceConfig): Boolean =
+        config.baseUrl.startsWith(SflxHost.CONFIG_SCHEME, ignoreCase = true)
+
+    /** The installed-extension rows, in the order they will be asked in. */
+    fun extensions(): List<SourceConfig> = configs.value.filter { isExtension(it) }
+
+    private fun publish(next: List<SourceConfig>, persist: Boolean = true) {        configs.value = next
+        // Rebuilt against the previous map so that an untouched source keeps
+        // the instance it already had, rather than being replaced by an
+        // identical-but-cold one every time an unrelated row is toggled.
+        val previous = instances
+        instances = next.associate { config ->
+            val existing = previous[config.id]?.takeIf { it.configuredBy(config) }
+            config.id to (existing ?: build(config))
+        }
+        // Whatever the rebuild above left behind, told so. An addon that was
+        // edited or removed is holding a manifest, a set of search answers and
+        // a handful of stream URLs that all describe the server it used to
+        // point at, and its client's own scope keeps them alive whether or not
+        // anything still references the source. Serving one of those afterwards
+        // would be answering a question about the old address with the new one
+        // selected.
+        previous.values.filterNot { it in instances.values }
+            .filterIsInstance<AddonSource>()
+            .forEach { it.release() }
+        if (persist && ::prefs.isInitialized) {
+            prefs.edit()
+                .putString(KEY_SOURCES, json.encodeToString(ListSerializer(SourceConfig.serializer()), next))
+                .apply()
+        }
+    }
+
+    /**
+     * Works out what is at [url] and returns a config that speaks to it, or a
+     * refusal saying what was found instead.
+     *
+     * This is what makes the editor accept "any JSON" rather than one shape.
+     * The kind is *detected* rather than chosen up front: pasting an addon's
+     * root, an addon's `manifest.json`, or a module index all end here, and
+     * which [MusicSource] gets built is decided by what the server actually
+     * returned. Anything recognised but unplayable — an extension registry, a
+     * manifest that cannot stream — comes back as a failure carrying a line
+     * written for the person reading it.
+     *
+     * [existing] is carried through so editing a saved source keeps its id and
+     * its on/off state; a new source gets a fresh config.
+     */
+    suspend fun identify(url: String, existing: SourceConfig? = null): Result<SourceConfig> {
+        val detected = SourceFormats.identify(url).getOrElse { return Result.failure(it) }
+        return when (detected) {
+            is DetectedFormat.Addon -> Result.success(
+                (existing ?: SourceConfig(kind = SourceKind.ADDON)).copy(
+                    kind = SourceKind.ADDON,
+                    baseUrl = detected.baseUrl,
+                    label = detected.manifest.displayName,
+                    allowDownloads = detected.manifest.downloadsAllowed,
+                    checkValidLossless = detected.manifest.requiresLosslessOutput,
+                ),
+            )
+            is DetectedFormat.ModuleIndex -> Result.success(
+                (existing ?: SourceConfig(kind = SourceKind.CUSTOM_MODULE)).copy(
+                    kind = SourceKind.CUSTOM_MODULE,
+                    // The index URL itself, not a base: a module index is the
+                    // document, where an addon's manifest only points at one.
+                    baseUrl = detected.url,
+                    label = existing?.label.orEmpty(),
+                ),
+            )
+            is DetectedFormat.Unsupported -> Result.failure(AddonException(detected.reason))
+        }
+    }
+
+    /**
+     * The already-configured source pointing at [url], if there is one.
+     *
+     * Compared after [identify] has run rather than on the raw text, which is
+     * what makes this catch the cases worth catching: an addon's root and its
+     * `manifest.json` are the same server typed two ways, and both normalise to
+     * one base before they reach here. A trailing slash, a `MANIFEST.JSON`, and
+     * a host in a different case are all the same source too.
+     *
+     * [exceptId] is the source being edited, which is not its own duplicate —
+     * without it, saving an existing addon without touching its URL would
+     * refuse itself.
+     */
+    fun duplicateOf(url: String, exceptId: String? = null): SourceConfig? {
+        val wanted = canonicalUrl(url)
+        if (wanted.isEmpty()) return null
+        return configs.value.firstOrNull { it.id != exceptId && canonicalUrl(it.baseUrl) == wanted }
+    }
+
+    /**
+     * A URL reduced to the form two spellings of the same address share.
+     *
+     * Scheme and host are lowercased because they are case-insensitive; the
+     * path deliberately is not, because on this protocol the path can carry a
+     * user's token and two tokens differing only in case are two different
+     * credentials. Falls back to the trimmed text when the URL will not parse,
+     * so a malformed entry still compares equal to itself.
+     */
+    private fun canonicalUrl(raw: String): String {
+        val trimmed = raw.trim().trimEnd('/')
+        val parsed = trimmed.toHttpUrlOrNull() ?: return trimmed
+        val path = parsed.encodedPath.trimEnd('/')
+        val query = parsed.encodedQuery?.let { "?$it" }.orEmpty()
+        return "${parsed.scheme}://${parsed.host}${if (parsed.port != defaultPort(parsed.scheme)) ":${parsed.port}" else ""}$path$query"
+    }
+
+    private fun defaultPort(scheme: String) = if (scheme == "https") 443 else 80
+
+    /**
+     * Health-checks a config that hasn't been saved — what the editor's Test
+     * button asks.
+     *
+     * Built fresh and thrown away rather than routed through [instances],
+     * which hold the *stored* config: testing one of those would report on the
+     * old address, which is precisely the state the user is in the middle of
+     * correcting.
+     */
+    suspend fun probeCandidate(config: SourceConfig): SourceHealth = build(config).health()
+
+    private fun build(config: SourceConfig): MusicSource = when (config.kind) {
+        SourceKind.ADDON -> AddonSource(config)
+        // Same protocol, same implementation — the kinds differ only in rank.
+        SourceKind.CUSTOM_MODULE -> ModuleSource(config)
+        SourceKind.MODULE -> ModuleSource(config)
+        SourceKind.JIOSAAVN -> JioSaavnSource(config)
+        SourceKind.YOUTUBE -> YouTubeSource(config)
+    }
+
+    /**
+     * Whether an already-built instance still matches its stored config —
+     * false after an edit that changes where it points, which is exactly when
+     * the warm instance must be thrown away. The manifest switches are left
+     * out: they change no address, and a source reads them live from here.
+     */
+    private fun MusicSource.configuredBy(config: SourceConfig): Boolean =
+        this is ConfigBacked && this.config.withPolicyOf(config) == config
+
+    /** Implemented by sources that carry their [SourceConfig], so [publish] can tell a real edit from a no-op. */
+    internal interface ConfigBacked {
+        val config: SourceConfig
+    }
+
+    // ── Track identity ──────────────────────────────────────────────────
+
+    /**
+     * A source-backed track's id, as it travels through the queue.
+     *
+     * Packed into the existing [Song.videoId][com.music.bitchord.data.model.Song.videoId]
+     * rather than added beside it: that field is the app's media id everywhere —
+     * the queue, the notification, the history, the like state — and a second
+     * identity field would have to be threaded through every one of them, with
+     * each place that forgot silently falling back to treating the track as
+     * YouTube's.
+     */
+    fun trackKey(configId: String, trackId: String) = "$PREFIX$configId$SEPARATOR$trackId"
+
+    /** The `(configId, trackId)` inside a [trackKey], or null if this is an ordinary YouTube id. */
+    fun parseTrackKey(key: String): Pair<String, String>? = SourceTrackKeys.parse(key)
+
+    /** The playback URI for a source-backed track; [PlaybackService] resolves it at open time. */
+    fun trackUri(configId: String, trackId: String): String =
+        Uri.Builder()
+            .scheme("bitchord")
+            .authority("source")
+            .appendQueryParameter("s", configId)
+            .appendQueryParameter("t", trackId)
+            .build()
+            .toString()
+
+
+    private val BUILT_IN_KINDS = listOf(SourceKind.JIOSAAVN, SourceKind.YOUTUBE)
+
+    /**
+     * The host a source's address points at, for rows that have no name of
+     * their own. Accepts a bare host as well as a full URL, since both reach
+     * the same field. OkHttp parses both; `android.net.Uri` is only a stub in
+     * JVM unit tests, which is why this is not the parser used.
+     */
+    internal fun hostOf(raw: String): String? {
+        val trimmed = raw.trim()
+        if (trimmed.isEmpty()) return null
+        val candidate = if ("://" in trimmed) trimmed else "https://$trimmed"
+        return candidate.toHttpUrlOrNull()?.host?.takeIf { it.isNotBlank() }
+    }
+
+    private const val KEY_SOURCES = "sources"
+    /** One-shot migration: existing users must explicitly opt in again. */
+    private const val KEY_JIOSAAVN_OPT_IN_V1 = "jiosaavn_opt_in_v1"
+    private const val PREFIX = "src:"
+    private const val SEPARATOR = "::"
+}
