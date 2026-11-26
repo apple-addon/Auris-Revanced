@@ -56,16 +56,23 @@ add_library(bitchord_dsd SHARED dsd/dsd_decimator.cpp)
 target_compile_options(bitchord_dsd PRIVATE -O3 -fno-fast-math -ffp-contract=off -fvisibility=hidden)
 target_link_options(bitchord_dsd PRIVATE "-Wl,-z,max-page-size=16384")
 
-add_library(bitchord_dst SHARED dsd/dst/decoder.c dsd/dst/jni.cpp)
+add_library(bitchord_dst SHARED dsd/dst/decoder.c dsd/dst/jni.cpp decoder/dst_raw_jni.cpp)
 target_compile_options(bitchord_dst PRIVATE -O3 -fno-strict-aliasing -fvisibility=hidden)
 target_link_options(bitchord_dst PRIVATE "-Wl,-z,max-page-size=16384")
 
 # Direct JNI bridge into the real PAWS/HiBy reference engines. The steady-state
 # PCM writer uses preallocated storage and does not attach audio threads to JNI.
-add_library(auris_native_bridge SHARED auris_native_bridge/native_bridge.cpp)
+add_library(auris_native_bridge SHARED
+    auris_native_bridge/native_bridge.cpp
+    paws_reference/paws_pcm_bridge.cpp
+)
 target_compile_options(auris_native_bridge PRIVATE -O3 -ffp-contract=off -fvisibility=hidden)
 target_link_options(auris_native_bridge PRIVATE "-Wl,-z,max-page-size=16384")
 target_link_libraries(auris_native_bridge ${log-lib} dl)
+
+# Real AAudio/OpenSL ES PCM-float endpoints used by AurisAudioOutputProvider.
+# Construction/open failures propagate to Media3; there is no silent fallback.
+add_subdirectory(native_outputs)
 
 # JamesDSP's native engine, running in-process on BitChord's own Float32
 # playback stream. See jamesdsp/CMakeLists.txt and JamesDspProcessor.kt.

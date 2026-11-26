@@ -5,6 +5,8 @@ import android.os.Build
 import android.util.Log
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.data.settings.ReferenceEngineMode
+import com.music.bitchord.playback.audio.drivers.OutputDriverTelemetry
+import com.music.bitchord.playback.reference.paws.PawsHostRuntime
 import dalvik.system.DexClassLoader
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -26,7 +28,9 @@ data class ReferenceEngineSnapshot(
     val paws: NativeEngineStatus = NativeEngineStatus(NativeLoadState.BYPASSED, "Quality Options OFF"),
     val hiby: NativeEngineStatus = NativeEngineStatus(NativeLoadState.BYPASSED, "Quality Options OFF"),
     val hibyOutputActive: Boolean = false,
+    val pawsOutputActive: Boolean = false,
     val outputDetail: String? = null,
+    val driverTelemetry: OutputDriverTelemetry? = null,
 )
 
 /** Ordered, fail-closed loader for the exact rebranded JNI host DEX archives. */
@@ -41,11 +45,15 @@ object ReferenceEngineLoader {
 
     private var appContext: Context? = null
     private var pawsLoader: DexClassLoader? = null
+    private var pawsRuntime: PawsHostRuntime? = null
     private var hibyRuntime: HibyHostRuntime? = null
     private var loadedMode: ReferenceEngineMode? = null
 
     val hibyHost: HibyHostRuntime?
         get() = hibyRuntime?.takeIf { mutableStatus.value.hiby.state == NativeLoadState.LOADED_ACTIVE }
+
+    val pawsHost: PawsHostRuntime?
+        get() = pawsRuntime?.takeIf { mutableStatus.value.paws.state == NativeLoadState.LOADED_ACTIVE }
 
     /** Must run off the audio thread. Native loading stays untouched while Quality Options is OFF. */
     fun ensureLoaded(context: Context, mode: ReferenceEngineMode = AppSettings.referenceEngineMode.value) {
@@ -79,6 +87,7 @@ object ReferenceEngineLoader {
             val probe = ReferenceNativeBridge.nativeProbe("auriscore")
             check(probe == "OK") { probe }
             pawsLoader = loader
+            pawsRuntime = PawsHostRuntime(loader).also { it.initialize(context) }
             mutableStatus.value = mutableStatus.value.copy(
                 paws = NativeEngineStatus(
                     NativeLoadState.LOADED_ACTIVE,
@@ -89,6 +98,7 @@ object ReferenceEngineLoader {
             Log.i(TAG, "PAWS native core loaded; PCM transform requires a live Pipeline2 graph")
         } catch (error: Throwable) {
             val reason = rootCause(error)
+            pawsRuntime = null
             mutableStatus.value = mutableStatus.value.copy(
                 paws = NativeEngineStatus(NativeLoadState.FAILED, reason),
             )
@@ -107,7 +117,10 @@ object ReferenceEngineLoader {
             loader.loadClass("com.hiby.music.sdk.bridge.NativeLoader").getMethod("load").invoke(null)
             val probe = ReferenceNativeBridge.nativeProbe("hibyservice")
             check(probe == "OK") { probe }
-            hibyRuntime = HibyHostRuntime(loader).also { it.initialize(context) }
+            hibyRuntime = HibyHostRuntime(loader).also {
+                it.initialize(context)
+                it.applyOutputRules()
+            }
             mutableStatus.value = mutableStatus.value.copy(
                 hiby = NativeEngineStatus(
                     NativeLoadState.LOADED_ACTIVE,
@@ -173,10 +186,20 @@ object ReferenceEngineLoader {
         mutableStatus.value = mutableStatus.value.copy(hibyOutputActive = active, outputDetail = detail)
     }
 
+    fun markPawsOutput(active: Boolean, detail: String?) {
+        mutableStatus.value = mutableStatus.value.copy(pawsOutputActive = active, outputDetail = detail)
+    }
+
+    fun markDriver(telemetry: OutputDriverTelemetry) {
+        mutableStatus.value = mutableStatus.value.copy(driverTelemetry = telemetry)
+    }
+
     fun bypass(bitPerfect: Boolean = false) {
         synchronized(lock) {
             closeWriterOnly()
             loadedMode = null
+            runCatching { pawsRuntime?.close() }
+            pawsRuntime = null
             hibyRuntime = null
             pawsLoader = null
             val detail = if (bitPerfect) "BIT-PERFECT DIRECT" else "Quality Options OFF"
@@ -190,7 +213,8 @@ object ReferenceEngineLoader {
 
     private fun closeWriterOnly() {
         runCatching { HibyNativeTrackWriter.close() }
-        mutableStatus.value = mutableStatus.value.copy(hibyOutputActive = false)
+        runCatching { pawsRuntime?.closePcm() }
+        mutableStatus.value = mutableStatus.value.copy(hibyOutputActive = false, pawsOutputActive = false)
     }
 
     fun telemetrySummary(): String = referenceTelemetrySummary(

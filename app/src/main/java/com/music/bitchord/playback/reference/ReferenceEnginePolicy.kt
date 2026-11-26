@@ -11,11 +11,11 @@ fun referenceTelemetrySummary(
     if (!qualityOptions) return "Quality Options OFF"
     return when (mode) {
         ReferenceEngineMode.BIT_PERFECT -> "BIT-PERFECT DIRECT"
-        ReferenceEngineMode.POWERAMP -> when (snapshot.paws.state) {
-            NativeLoadState.FAILED -> "INIT FAILED: ${snapshot.paws.detail}"
-            NativeLoadState.BYPASSED -> "PAWS BYPASSED: ${snapshot.paws.detail}"
-            NativeLoadState.LOADED_ACTIVE ->
-                "INIT FAILED: Pipeline2 accepts URI/FD input; no arbitrary ExoPlayer PCM transform is exported"
+        ReferenceEngineMode.POWERAMP -> when {
+            snapshot.paws.state == NativeLoadState.FAILED -> "INIT FAILED: ${snapshot.paws.detail}"
+            snapshot.pawsOutputActive -> "PAWS NATIVE ACTIVE"
+            snapshot.paws.state == NativeLoadState.LOADED_ACTIVE -> "PAWS NATIVE READY"
+            else -> "PAWS BYPASSED: ${snapshot.paws.detail}"
         }
         ReferenceEngineMode.HIBY -> when {
             snapshot.hiby.state == NativeLoadState.FAILED -> "INIT FAILED: ${snapshot.hiby.detail}"

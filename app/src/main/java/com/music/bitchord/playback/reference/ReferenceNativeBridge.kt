@@ -25,4 +25,10 @@ object ReferenceNativeBridge {
     external fun nativeHibyLatency(): Int
     external fun nativeHibyNowConsumed(output: LongArray): Long
     external fun nativeCloseHiby()
+
+    external fun nativePawsOpenInput(sampleRate: Int, channels: Int): Int
+    external fun nativePawsWriteInput(buffer: ByteBuffer, byteOffset: Int, byteCount: Int): Int
+    external fun nativePawsPrepareOutput(): Int
+    external fun nativePawsReadOutput(nativeRef: Long, destination: ByteBuffer): Int
+    external fun nativePawsClose()
 }

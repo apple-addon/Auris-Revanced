@@ -7,6 +7,9 @@ import com.music.bitchord.playback.LoudnessProcessor
 import com.music.bitchord.playback.SpatialAudioProcessor
 import com.music.bitchord.playback.TransitionFilterProcessor
 import com.music.bitchord.playback.VocalCutProcessor
+import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.settings.ReferenceEngineMode
+import com.music.bitchord.playback.reference.paws.PawsNativeProcessor
 
 /**
  * Composite DSP chain executing BitChord's custom audio processors in their canonical sequence:
@@ -48,6 +51,7 @@ class DspChain(
     val jamesDsp: JamesDspProcessor = JamesDspProcessor(),
     val transition: TransitionFilterProcessor = TransitionFilterProcessor(),
     val loudness: LoudnessProcessor = LoudnessProcessor(),
+    val paws: PawsNativeProcessor = PawsNativeProcessor(),
 ) : FloatAudioProcessor {
 
     private var currentSampleRate: Int = 0
@@ -60,6 +64,11 @@ class DspChain(
         simAtmos.configure(sampleRate, channelCount)
         equalizer.configure(sampleRate, channelCount)
         jamesDsp.configure(sampleRate, channelCount)
+        if (AppSettings.qualityOptions.value &&
+            AppSettings.referenceEngineMode.value == ReferenceEngineMode.POWERAMP
+        ) {
+            paws.configure(sampleRate, channelCount)
+        }
         transition.configure(sampleRate, channelCount)
         loudness.configure(sampleRate, channelCount)
     }
@@ -76,13 +85,19 @@ class DspChain(
      * buffer straight to the delegate instead of decoding it to float and
      * encoding it back.
      */
+    private fun pawsActive(): Boolean = AppSettings.qualityOptions.value &&
+        AppSettings.referenceEngineMode.value == ReferenceEngineMode.POWERAMP
+
+    private fun jamesDspSuppressed(): Boolean = pawsActive()
+
     fun isBypassed(): Boolean =
         currentSampleRate > 0 &&
             sing.level <= 0.001f &&
             !spatial.enabled &&
             !simAtmos.enabled &&
             !equalizer.isEnabled &&
-            !jamesDsp.isEnabled &&
+            !pawsActive() &&
+            (jamesDspSuppressed() || !jamesDsp.isEnabled) &&
             !transition.isEngaged &&
             loudness.isParked()
 
@@ -113,7 +128,11 @@ class DspChain(
         spatial.process(block)
         simAtmos.process(block)
         equalizer.process(block)
-        jamesDsp.process(block)
+        if (pawsActive()) {
+            paws.process(block)
+        } else {
+            jamesDsp.process(block)
+        }
         transition.process(block)
         loudness.process(block)
     }
@@ -125,6 +144,7 @@ class DspChain(
         spatial.flush()
         equalizer.flush()
         jamesDsp.flush()
+        paws.flush()
         transition.flush()
         loudness.flush()
     }
@@ -136,6 +156,7 @@ class DspChain(
         simAtmos.reset()
         equalizer.reset()
         jamesDsp.reset()
+        paws.reset()
         transition.reset()
         loudness.reset()
     }

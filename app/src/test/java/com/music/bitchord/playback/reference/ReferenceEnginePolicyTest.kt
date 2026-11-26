@@ -41,13 +41,15 @@ class ReferenceEnginePolicyTest {
     }
 
     @Test
-    fun `PAWS library load is never mislabeled as PCM processing`() {
+    fun `PAWS active requires a live native output`() {
         val snapshot = ReferenceEngineSnapshot(
             paws = NativeEngineStatus(NativeLoadState.LOADED_ACTIVE, "loaded"),
         )
-        val summary = referenceTelemetrySummary(true, ReferenceEngineMode.POWERAMP, snapshot)
-        assert(summary.startsWith("INIT FAILED: Pipeline2"))
-        assert(!summary.contains("PAWS NATIVE ACTIVE"))
+        assertEquals("PAWS NATIVE READY", referenceTelemetrySummary(true, ReferenceEngineMode.POWERAMP, snapshot))
+        assertEquals(
+            "PAWS NATIVE ACTIVE",
+            referenceTelemetrySummary(true, ReferenceEngineMode.POWERAMP, snapshot.copy(pawsOutputActive = true)),
+        )
     }
 
     @Test
