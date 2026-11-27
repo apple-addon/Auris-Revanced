@@ -12,11 +12,14 @@ data class NativeOutputSpec(
     val audioSessionId: Int = 0,
     /** Zero lets the driver choose its buffer size. */
     val requestedBufferFrames: Int = 0,
+    /** AAudio device id; zero is the system default. OpenSL ignores this field. */
+    val audioDeviceId: Int = 0,
 ) {
     init {
         require(sampleRateHz in 1..768_000) { "Sample rate must be in 1..768000 Hz" }
         require(channelCount in 1..32) { "Channel count must be in 1..32" }
         require(requestedBufferFrames >= 0) { "Buffer size cannot be negative" }
+        require(audioDeviceId >= 0) { "Audio device id cannot be negative" }
     }
 
     val frameBytes: Int get() = channelCount * Float.SIZE_BYTES

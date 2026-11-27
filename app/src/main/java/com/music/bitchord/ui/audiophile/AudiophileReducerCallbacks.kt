@@ -309,9 +309,17 @@ private fun outputCallbacks(
         onChange(AudiophileAudioReducer.updateOutputBitPerfect(state, routeId, profileId, update))
     }
     return OutputSettingsCallbacks(
-        onRouteEnabledChange = { routeId, value ->
+        onRouteSelected = { routeId ->
+            onChange(AudiophileAudioReducer.selectOutputRoute(state, routeId))
+        },
+        onOutputDriverSelected = { driver ->
+            onChange(AudiophileAudioReducer.selectOutputDriver(state, driver))
+        },
+        onChromecastEnabledChange = { value ->
             onChange(
-                AudiophileAudioReducer.updateOutputRoute(state, routeId) { it.copy(enabled = value) },
+                AudiophileAudioReducer.updateOutputRoute(state, AudioOutputRouteId.CHROMECAST) {
+                    it.copy(enabled = value)
+                },
             )
         },
         onProfileEnabledChange = { routeId, profileId, value ->

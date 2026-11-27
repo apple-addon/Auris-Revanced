@@ -64,9 +64,7 @@ class DspChain(
         simAtmos.configure(sampleRate, channelCount)
         equalizer.configure(sampleRate, channelCount)
         jamesDsp.configure(sampleRate, channelCount)
-        if (AppSettings.qualityOptions.value &&
-            AppSettings.referenceEngineMode.value == ReferenceEngineMode.POWERAMP
-        ) {
+        if (pawsRequested()) {
             paws.configure(sampleRate, channelCount)
         }
         transition.configure(sampleRate, channelCount)
@@ -85,10 +83,11 @@ class DspChain(
      * buffer straight to the delegate instead of decoding it to float and
      * encoding it back.
      */
-    private fun pawsActive(): Boolean = AppSettings.qualityOptions.value &&
-        AppSettings.referenceEngineMode.value == ReferenceEngineMode.POWERAMP
+    private fun pawsRequested(): Boolean = AppSettings.qualityOptions.value &&
+        (AppSettings.referenceEngineMode.value == ReferenceEngineMode.POWERAMP ||
+            AppSettings.referenceEngineMode.value == ReferenceEngineMode.HYBRID)
 
-    private fun jamesDspSuppressed(): Boolean = pawsActive()
+    private fun jamesDspSuppressed(): Boolean = pawsRequested()
 
     fun isBypassed(): Boolean =
         currentSampleRate > 0 &&
@@ -96,7 +95,7 @@ class DspChain(
             !spatial.enabled &&
             !simAtmos.enabled &&
             !equalizer.isEnabled &&
-            !pawsActive() &&
+            !pawsRequested() &&
             (jamesDspSuppressed() || !jamesDsp.isEnabled) &&
             !transition.isEngaged &&
             loudness.isParked()
@@ -128,7 +127,7 @@ class DspChain(
         spatial.process(block)
         simAtmos.process(block)
         equalizer.process(block)
-        if (pawsActive()) {
+        if (pawsRequested()) {
             paws.process(block)
         } else {
             jamesDsp.process(block)

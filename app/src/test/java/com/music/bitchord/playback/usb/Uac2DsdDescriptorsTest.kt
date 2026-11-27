@@ -19,7 +19,7 @@ class Uac2DsdDescriptorsTest {
     fun `parses native raw DSD alt and async feedback`() {
         val alts = Uac2DsdDescriptors.parse(rawDsdAlt() + dopAlt())
         assertEquals(2, alts.size)
-        val raw = Uac2DsdDescriptors.selectRawDsd(alts, 2_822_400, 2)
+        val raw = Uac2DsdDescriptors.selectRawDsd(alts, 88_200, 2)
         assertNotNull(raw)
         checkNotNull(raw)
         assertTrue(raw.rawDsd)
@@ -27,7 +27,7 @@ class Uac2DsdDescriptorsTest {
         assertEquals(4, raw.subframeBytes)
         assertEquals(0x83, raw.feedbackEndpoint)
         assertEquals(4, raw.feedbackPacketSize)
-        assertEquals(2_822_400, raw.sampleRatesHz.single())
+        assertEquals(88_200, raw.sampleRatesHz.single())
     }
 
     @Test
@@ -39,14 +39,14 @@ class Uac2DsdDescriptorsTest {
         assertFalse(dop.rawDsd)
         assertEquals(24, dop.bitResolution)
         assertEquals(3, dop.subframeBytes)
-        assertNull(Uac2DsdDescriptors.selectDop(alts, 2_822_400, 2))
+        assertNull(Uac2DsdDescriptors.selectDop(alts, 88_200, 2))
     }
 
     @Test
     fun `raw DSD selection respects channels and clock`() {
         val alts = Uac2DsdDescriptors.parse(rawDsdAlt())
         assertNull(Uac2DsdDescriptors.selectRawDsd(alts, 2_822_400, 1))
-        assertNull(Uac2DsdDescriptors.selectRawDsd(alts, 5_644_800, 2))
+        assertNull(Uac2DsdDescriptors.selectRawDsd(alts, 176_400, 2))
     }
 
     @Test
@@ -75,7 +75,8 @@ class Uac2DsdDescriptorsTest {
         channels = 2,
         subframe = 4,
         bits = 32,
-        rate = 2_822_400,
+        // DSD64 / 32 slots = 88.2 kHz carrier frames, not the 2.8224 MHz bit clock.
+        rate = 88_200,
     ) + endpoint(0x01, 0x400, 1) + endpoint(0x83, 4, 1)
 
     private fun dopAlt(): ByteArray = interfaceAlt(2) + formatAlt(

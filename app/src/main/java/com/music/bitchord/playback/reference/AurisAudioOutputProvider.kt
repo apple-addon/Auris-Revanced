@@ -4,6 +4,7 @@ import android.content.Context
 import android.media.AudioDeviceInfo
 import android.media.AudioFormat
 import androidx.annotation.OptIn
+import androidx.media3.common.MimeTypes
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.audio.AudioOutput
@@ -24,18 +25,19 @@ import kotlinx.coroutines.flow.asStateFlow
 import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
+import kotlin.math.min
 
 /** Media3 1.11 output-provider bridge; stock AudioTrack remains the fallback. */
 @OptIn(UnstableApi::class)
 class AurisAudioOutputProvider(
     context: Context,
     private val isAudible: () -> Boolean = { true },
-    activeDevice: () -> AudioDeviceInfo? = { null },
+    private val activeDevice: () -> AudioDeviceInfo? = { null },
 ) : ForwardingAudioOutputProvider(
     AudioTrackAudioOutputProvider.Builder(context.applicationContext).build(),
 ) {
     private val hiRes = AudioTrackHiResOutputProvider(context, activeDevice)
-    private val nativeOutputs = mutableMapOf<Int, NativeAudioOutput>()
+    private val nativeOutputs = ConcurrentHashMap<Int, NativeAudioOutput>()
 
     override fun getFormatSupport(formatConfig: AudioOutputProvider.FormatConfig): AudioOutputProvider.FormatSupport =
         when (selectedDriver()) {
@@ -45,6 +47,19 @@ class AurisAudioOutputProvider(
                     AudioOutputProvider.FormatSupport.UNSUPPORTED
                 } else {
                     // Native PCM outputs have no offload/tunneling implementation.
+                    super.getFormatSupport(formatConfig).buildUpon()
+                        .setIsFormatSupportedForOffload(false)
+                        .setIsGaplessSupportedForOffload(false)
+                        .setIsSpeedChangeSupportedForOffload(false)
+                        .build()
+                }
+            }
+            OutputDriver.AUDIO_TRACK -> {
+                if (!hibySelected()) {
+                    super.getFormatSupport(formatConfig)
+                } else if (!isHibyPcm16(formatConfig)) {
+                    AudioOutputProvider.FormatSupport.UNSUPPORTED
+                } else {
                     super.getFormatSupport(formatConfig).buildUpon()
                         .setIsFormatSupportedForOffload(false)
                         .setIsGaplessSupportedForOffload(false)
@@ -65,6 +80,23 @@ class AurisAudioOutputProvider(
                     throw AudioOutputProvider.ConfigurationException(problem)
                 }
                 config
+            }
+            OutputDriver.AUDIO_TRACK -> {
+                if (!hibySelected()) {
+                    super.getOutputConfig(formatConfig)
+                } else {
+                    if (!isHibyPcm16(formatConfig)) {
+                        throw AudioOutputProvider.ConfigurationException(
+                            "HiBy native output accepts only raw PCM16 input",
+                        )
+                    }
+                    super.getOutputConfig(formatConfig).buildUpon()
+                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
+                        .setIsOffload(false)
+                        .setIsTunneling(false)
+                        .setUseOffloadGapless(false)
+                        .build()
+                }
             }
             else -> super.getOutputConfig(formatConfig)
         }
@@ -96,7 +128,11 @@ class AurisAudioOutputProvider(
                 }
                 try {
                     val output = when (driver) {
-                        OutputDriver.AAUDIO -> NativeAudioOutput.openAAudio(outputConfig)
+                        OutputDriver.AAUDIO -> NativeAudioOutput.openAAudio(
+                            outputConfig,
+                            requestExclusive = true,
+                            audioDeviceId = activeDevice()?.id?.takeIf { it > 0 } ?: 0,
+                        )
                         OutputDriver.OPENSL_ES -> NativeAudioOutput.openOpenSlEs(outputConfig)
                         else -> error("Not a native output driver")
                     }
@@ -110,6 +146,7 @@ class AurisAudioOutputProvider(
                         override fun onOffloadPresentationEnded() = Unit
                         override fun onReleased() {
                             nativeRegistrations.remove(key)
+                            nativeOutputs.remove(key)
                             refreshNativeOutputTelemetry()
                         }
                     })
@@ -124,20 +161,32 @@ class AurisAudioOutputProvider(
             else -> Unit
         }
 
-        val hibyRequested = AppSettings.qualityOptions.value &&
-            selectedDriver() == OutputDriver.AUDIO_TRACK &&
-            AppSettings.referenceEngineMode.value == ReferenceEngineMode.HIBY &&
-            ReferenceEngineLoader.status.value.hiby.state == NativeLoadState.LOADED_ACTIVE &&
-            isAudible() &&
-            outputConfig.encoding == AudioFormat.ENCODING_PCM_16BIT &&
-            !outputConfig.isOffload &&
-            !outputConfig.isTunneling
+        val hibyRequested = hibySelected() && isAudible()
         if (hibyRequested) {
             val owner = System.identityHashCode(this)
             val channels = Integer.bitCount(outputConfig.channelMask).coerceAtLeast(1)
-            if (HibyNativeTrackWriter.configure(outputConfig.sampleRate, channels, owner)) {
-                ReferenceEngineLoader.markDriver(telemetry(outputConfig, "HiBy Native", "Native"))
-                return HibyAudioOutput(outputConfig, owner)
+            try {
+                check(ReferenceEngineLoader.status.value.hiby.state == NativeLoadState.LOADED_ACTIVE) {
+                    ReferenceEngineLoader.status.value.hiby.detail
+                }
+                check(outputConfig.encoding == AudioFormat.ENCODING_PCM_16BIT) {
+                    "HiBy native output requires the Media3 PCM16 path"
+                }
+                check(!outputConfig.isOffload && !outputConfig.isTunneling) {
+                    "HiBy native output does not support offload or tunneling"
+                }
+                if (HibyNativeTrackWriter.configure(outputConfig.sampleRate, channels, owner)) {
+                    ReferenceEngineLoader.markDriver(telemetry(outputConfig, "HiBy Native", "Native"))
+                    return HibyAudioOutput(outputConfig, owner)
+                }
+                error("HiBy native endpoint is busy by another sink")
+            } catch (error: Exception) {
+                val detail = ReferenceEngineLoader.status.value.hibyOutput.detail
+                    ?.takeIf { ReferenceEngineLoader.status.value.hibyOutput.state == NativeStreamState.FAILED }
+                    ?: "INIT FAILED: HiBy output: ${error.message ?: error.javaClass.simpleName}"
+                ReferenceEngineLoader.markHibyOutput(NativeStreamState.FAILED, detail)
+                ReferenceEngineLoader.markDriver(telemetry(outputConfig, "HiBy Native", "Unavailable", detail))
+                throw AudioOutputProvider.InitializationException(error)
             }
         }
         return super.getAudioOutput(outputConfig).also {
@@ -146,6 +195,15 @@ class AurisAudioOutputProvider(
     }
 
     private fun selectedDriver(): OutputDriver = AppSettings.outputDriver.value
+
+    private fun hibySelected(): Boolean = AppSettings.qualityOptions.value &&
+        selectedDriver() == OutputDriver.AUDIO_TRACK &&
+        (AppSettings.referenceEngineMode.value == ReferenceEngineMode.HIBY ||
+            AppSettings.referenceEngineMode.value == ReferenceEngineMode.HYBRID)
+
+    private fun isHibyPcm16(formatConfig: AudioOutputProvider.FormatConfig): Boolean =
+        formatConfig.format.sampleMimeType == MimeTypes.AUDIO_RAW &&
+            formatConfig.format.pcmEncoding == AudioFormat.ENCODING_PCM_16BIT
 
     private fun nativeConfigurationProblem(config: AudioOutputProvider.OutputConfig): String? = when {
         AppSettings.playbackSpeed.value != 1f ->
@@ -258,15 +316,18 @@ class AurisAudioOutputProvider(
 
 /** HiBy native output with frame accounting in the emitted PCM16 clock domain. */
 @OptIn(UnstableApi::class)
-private class HibyAudioOutput(
+internal class HibyAudioOutput(
     private val config: AudioOutputProvider.OutputConfig,
     private val owner: Int,
+    private val writeNative: (ByteBuffer, Int) -> Int = HibyNativeTrackWriter::write,
 ) : AudioOutput {
     private val listeners = CopyOnWriteArrayList<AudioOutput.Listener>()
     private var playbackParameters = PlaybackParameters.DEFAULT
-    private var stalled = false
-    private var released = false
+    @Volatile private var stalled = false
+    @Volatile private var released = false
+    private val directStaging = ByteBuffer.allocateDirect(HIBY_WRITE_BYTES)
 
+    @Synchronized
     override fun play() = HibyNativeTrackWriter.start(owner)
 
     override fun pause() {
@@ -274,27 +335,59 @@ private class HibyAudioOutput(
         // pre-roll; stop() is the transport-level endpoint operation.
     }
 
-    override fun write(buffer: ByteBuffer, bytes: Int, presentationTimeUs: Long): Boolean {
+    @Synchronized
+    override fun write(
+        buffer: ByteBuffer,
+        encodedAccessUnitCount: Int,
+        presentationTimeUs: Long,
+    ): Boolean {
         if (released) return false
-        val writable = bytes.coerceAtMost(buffer.remaining())
+        // PCM16 uses the remaining bytes; the second Media3 argument is an
+        // encoded access-unit count (normally one), not a byte count.
+        val writable = buffer.remaining()
+        if (writable == 0) {
+            stalled = false
+            return true
+        }
         val initialPosition = buffer.position()
-        val slice = buffer.slice().apply { limit(writable) }
+        val offered = if (buffer.isDirect) {
+            buffer.slice().apply { limit(writable) }
+        } else {
+            // The native writer addresses a direct ByteBuffer. Stage heap
+            // decoder buffers into fixed direct storage instead of failing them.
+            val stagedBytes = min(writable, directStaging.capacity())
+            directStaging.clear()
+            buffer.duplicate().apply {
+                position(initialPosition)
+                limit(initialPosition + stagedBytes)
+            }.let(directStaging::put)
+            directStaging.flip()
+            directStaging
+        }
         // Keep the Media3 buffer's position in lockstep with native consumption.
-        val result = HibyNativeTrackWriter.write(slice, owner)
-        buffer.position(initialPosition + slice.position())
-        stalled = result > 0
-        if (result < 0) throw AudioOutput.WriteException(result, true)
-        return result == 0 && !buffer.hasRemaining()
+        val result = writeNative(offered, owner)
+        buffer.position(initialPosition + offered.position())
+        if (result < 0) {
+            stalled = false
+            throw AudioOutput.WriteException(result, true)
+        }
+        stalled = buffer.hasRemaining()
+        return !stalled
     }
 
+    @Synchronized
     override fun flush() {
         val channels = Integer.bitCount(config.channelMask).coerceAtLeast(1)
-        HibyNativeTrackWriter.configure(config.sampleRate, channels, owner)
+        check(HibyNativeTrackWriter.configure(config.sampleRate, channels, owner)) {
+            "HiBy native output could not be reconfigured after flush"
+        }
         stalled = false
     }
 
+    @Synchronized
     override fun stop() = HibyNativeTrackWriter.stop(owner)
 
+    @Synchronized
     override fun release() {
         if (released) return
         released = true
@@ -335,7 +428,13 @@ private class HibyAudioOutput(
     override fun setOffloadEndOfStream() = stop()
     override fun attachAuxEffect(effectId: Int) = Unit
     override fun setAuxEffectSendLevel(level: Float) = Unit
-    override fun setPreferredDevice(device: AudioDeviceInfo?) = Unit
+    override fun setPreferredDevice(device: AudioDeviceInfo?) {
+        if (device != null) {
+            throw UnsupportedOperationException(
+                "HiBy native output does not support preferred-device routing",
+            )
+        }
+    }
 
     override fun canReuseAudioOutput(
         outputConfig: AudioOutputProvider.OutputConfig,
@@ -346,4 +445,8 @@ private class HibyAudioOutput(
         outputConfig.channelMask == otherOutputConfig.channelMask &&
         !otherOutputConfig.isOffload &&
         !otherOutputConfig.isTunneling
+
+    private companion object {
+        const val HIBY_WRITE_BYTES = 256 * 1024
+    }
 }

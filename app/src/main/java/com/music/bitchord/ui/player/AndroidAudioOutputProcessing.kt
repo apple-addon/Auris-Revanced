@@ -65,6 +65,8 @@ import com.music.bitchord.ui.reference.PowerampEqLauncherTile
 import com.music.bitchord.ui.reference.PowerampEqState
 import com.music.bitchord.ui.reference.PowerampEqUiState
 import com.music.bitchord.ui.reference.PowerampEqDefaults
+import com.music.bitchord.ui.reference.PowerampFullScreenTheme
+import com.music.bitchord.ui.reference.ReferenceFullScreenDialog
 import com.music.bitchord.ui.reference.ReferencePresetAction
 import com.music.bitchord.ui.reference.normalized
 import kotlinx.coroutines.Dispatchers
@@ -73,7 +75,7 @@ import kotlinx.coroutines.withContext
 
 private enum class OutputEditor { NONE, POWERAMP, MSEB, PEQ }
 
-/** Android-only reference controls, mounted by the shared output drawer without a second scroller. */
+/** Android-only launchers mounted by the shared output drawer; editors own full-window scrollers. */
 @Composable
 fun AndroidAudioOutputProcessing() {
     val context = LocalContext.current
@@ -170,7 +172,10 @@ fun AndroidAudioOutputProcessing() {
             PowerampEqLauncherTile(
                 state = poweramp,
                 selectedPresetName = if (powerampPresetId == "flat") "Flat" else powerampPresetName,
-                onOpenHub = { editor = if (editor == OutputEditor.POWERAMP) OutputEditor.NONE else OutputEditor.POWERAMP },
+                onOpenHub = {
+                    editor = OutputEditor.POWERAMP
+                    powerampUi = powerampUi.copy(presetsVisible = false, contextPresetId = null)
+                },
                 onOpenPresets = {
                     editor = OutputEditor.POWERAMP
                     powerampUi = powerampUi.copy(presetsVisible = true)
@@ -179,127 +184,146 @@ fun AndroidAudioOutputProcessing() {
             ReferenceLauncherTile(
                 title = "HiBy MSEB",
                 subtitle = "${mseb.presetName} · ${if (mseb.enabled) "On" else "Off"} · hold to share",
-                onClick = { editor = if (editor == OutputEditor.MSEB) OutputEditor.NONE else OutputEditor.MSEB },
+                onClick = { editor = OutputEditor.MSEB },
                 onLongClick = ::shareMseb,
             )
             ReferenceLauncherTile(
                 title = "HiBy PEQ",
                 subtitle = "${peq.presetName} · ${if (peq.enabled) "On" else "Off"} · hold to share",
-                onClick = { editor = if (editor == OutputEditor.PEQ) OutputEditor.NONE else OutputEditor.PEQ },
+                onClick = { editor = OutputEditor.PEQ },
                 onLongClick = ::sharePeq,
                 tuneIcon = true,
             )
 
             when (editor) {
                 OutputEditor.POWERAMP -> {
-                    EditorStatus(
-                        when (referenceMode) {
-                            ReferenceEngineMode.POWERAMP ->
-                                "PAWS PCM: ${if (engineStatus.pawsOutputActive) "active" else "ready/not streaming"}. PEQ bands, balance, tempo and volume also map to the live controls; PAWS-only tone/reverb controls are not claimed as applied."
-                            ReferenceEngineMode.HIBY, ReferenceEngineMode.HYBRID ->
-                                "Ten bands are applied through HiBy PEQ. Balance, tempo and volume use Auris playback controls; PAWS-only reverb controls remain unapplied."
-                            ReferenceEngineMode.BIT_PERFECT ->
-                                "Bit-perfect bypasses DSP. Editor choices are saved but are not processing audio."
-                        },
-                    )
-                    PowerampEqHub(
-                        state = poweramp,
-                        uiState = powerampUi,
-                        presets = listOf(userPoweramp, flatPoweramp),
-                        selectedPresetId = powerampPresetId,
-                        onStateChange = { AppSettings.setPowerampEqState(it) },
-                        onUiStateChange = { powerampUi = it },
-                        onPresetSelected = { preset ->
-                            powerampPresetId = preset.id
-                            if (preset.id == "flat") {
-                                AppSettings.setPowerampEqState(poweramp.copy(
-                                    preampDb = 0f,
-                                    bands = PowerampEqDefaults.bands,
-                                    bassDb = 0f,
-                                    trebleDb = 0f,
-                                ))
-                            }
-                        },
-                        onPresetAction = { action, _ ->
-                            when (action) {
-                                ReferencePresetAction.SAVE, ReferencePresetAction.DUPLICATE -> {
-                                    AppSettings.setPowerampEqState(poweramp, powerampPresetName)
-                                    powerampPresetId = "user"
-                                    toast("Poweramp preset saved")
-                                }
-                                ReferencePresetAction.IMPORT -> import(OutputEditor.POWERAMP)
-                                ReferencePresetAction.SHARE -> sharePoweramp()
-                                ReferencePresetAction.RENAME -> renamePoweramp = true
-                                ReferencePresetAction.DELETE, ReferencePresetAction.RESET -> {
-                                    AppSettings.setPowerampEqState(PowerampEqState())
-                                    powerampPresetId = "user"
-                                }
-                            }
-                        },
-                    )
+                    PowerampFullScreenTheme {
+                        ReferenceFullScreenDialog(
+                            title = "Poweramp EQ Hub",
+                            onDismissRequest = { editor = OutputEditor.NONE },
+                        ) {
+                            EditorStatus(
+                                when (referenceMode) {
+                                    ReferenceEngineMode.POWERAMP ->
+                                        "PAWS PCM: ${if (engineStatus.pawsOutputActive) "active" else "ready/not streaming"}. EQ, preamp, tone, limiter, balance, stereo, tempo, mono and reverb use original PAWS controls. Volume uses Auris PCM gain."
+                                    ReferenceEngineMode.HIBY ->
+                                        "PEQ bands and preamp are set and read back through HiBy. Balance/volume use Auris PCM; tempo uses Media3. PAWS-only reverb, stereo and mono remain unapplied."
+                                    ReferenceEngineMode.HYBRID ->
+                                        "PAWS controls feed HiBy PCM16 output without mirrored double EQ. HiBy MSEB/PEQ stay independent and use native readback; volume uses Auris PCM gain."
+                                    ReferenceEngineMode.BIT_PERFECT ->
+                                        "Bit-perfect bypasses DSP. Editor choices are saved but are not processing audio."
+                                },
+                            )
+                            PowerampEqHub(
+                                state = poweramp,
+                                uiState = powerampUi,
+                                presets = listOf(userPoweramp, flatPoweramp),
+                                selectedPresetId = powerampPresetId,
+                                onStateChange = { AppSettings.setPowerampEqState(it) },
+                                onUiStateChange = { powerampUi = it },
+                                onPresetSelected = { preset ->
+                                    powerampPresetId = preset.id
+                                    if (preset.id == "flat") {
+                                        AppSettings.setPowerampEqState(poweramp.copy(
+                                            preampDb = 0f,
+                                            bands = PowerampEqDefaults.bands,
+                                            bassGain = 0f,
+                                            trebleGain = 0f,
+                                        ))
+                                    }
+                                },
+                                onPresetAction = { action, _ ->
+                                    when (action) {
+                                        ReferencePresetAction.SAVE, ReferencePresetAction.DUPLICATE -> {
+                                            AppSettings.setPowerampEqState(poweramp, powerampPresetName)
+                                            powerampPresetId = "user"
+                                            toast("Poweramp preset saved")
+                                        }
+                                        ReferencePresetAction.IMPORT -> import(OutputEditor.POWERAMP)
+                                        ReferencePresetAction.SHARE -> sharePoweramp()
+                                        ReferencePresetAction.RENAME -> renamePoweramp = true
+                                        ReferencePresetAction.DELETE, ReferencePresetAction.RESET -> {
+                                            AppSettings.setPowerampEqState(PowerampEqState())
+                                            powerampPresetId = "user"
+                                        }
+                                    }
+                                },
+                            )
+                        }
+                    }
                 }
                 OutputEditor.MSEB -> {
-                    EditorStatus(
-                        if (qualityOptions && referenceMode != ReferenceEngineMode.POWERAMP && referenceMode != ReferenceEngineMode.BIT_PERFECT) {
-                            "Changes call HiBy DspUtil MSEB directly. Native status: ${engineStatus.hiby.detail}."
-                        } else {
-                            "Saved only. Select Quality Options with HiBy or Hybrid to call the native MSEB engine."
-                        },
-                    )
                     ProviderAudioTheme(provider = providerAxes.ui, surface = ProviderAudioSurface.MSEB) {
-                        HiByMsebSurface(
-                            state = mseb,
-                            presets = listOf(userMseb, neutralMseb),
-                            onStateChange = AppSettings::setHibyMsebState,
-                            onPresetSelected = { preset ->
-                                if (preset.id == "neutral") {
-                                    AppSettings.setHibyMsebState(MsebState(enabled = mseb.enabled, presetName = "Neutral"))
-                                }
-                            },
-                            onAction = { action ->
-                                when (action) {
-                                    HiByPresetAction.SAVE -> {
-                                        AppSettings.setHibyMsebState(mseb.copy(presetName = "User preset"))
-                                        toast("MSEB preset saved")
+                        ReferenceFullScreenDialog(
+                            title = "HiBy MSEB",
+                            onDismissRequest = { editor = OutputEditor.NONE },
+                        ) {
+                            EditorStatus(
+                                if (qualityOptions && referenceMode != ReferenceEngineMode.POWERAMP && referenceMode != ReferenceEngineMode.BIT_PERFECT) {
+                                    "Changes are set and read back through HiBy DspUtil MSEB. Native status: ${engineStatus.hiby.detail}."
+                                } else {
+                                    "Saved only. Select Quality Options with HiBy or Hybrid to call the native MSEB engine."
+                                },
+                            )
+                            HiByMsebSurface(
+                                state = mseb,
+                                presets = listOf(userMseb, neutralMseb),
+                                onStateChange = AppSettings::setHibyMsebState,
+                                onPresetSelected = { preset ->
+                                    if (preset.id == "neutral") {
+                                        AppSettings.setHibyMsebState(MsebState(enabled = mseb.enabled, presetName = "Neutral"))
                                     }
-                                    HiByPresetAction.IMPORT -> import(OutputEditor.MSEB)
-                                    HiByPresetAction.SHARE -> shareMseb()
-                                }
-                            },
-                        )
+                                },
+                                onAction = { action ->
+                                    when (action) {
+                                        HiByPresetAction.SAVE -> {
+                                            AppSettings.setHibyMsebState(mseb.copy(presetName = "User preset"))
+                                            toast("MSEB preset saved")
+                                        }
+                                        HiByPresetAction.IMPORT -> import(OutputEditor.MSEB)
+                                        HiByPresetAction.SHARE -> shareMseb()
+                                    }
+                                },
+                            )
+                        }
                     }
                 }
                 OutputEditor.PEQ -> {
-                    EditorStatus(
-                        if (qualityOptions && referenceMode != ReferenceEngineMode.POWERAMP && referenceMode != ReferenceEngineMode.BIT_PERFECT) {
-                            "Changes call HiBy SmartAv PEQ directly. Native status: ${engineStatus.hiby.detail}."
-                        } else {
-                            "Saved only. Select Quality Options with HiBy or Hybrid to call the native PEQ engine."
-                        },
-                    )
                     ProviderAudioTheme(provider = providerAxes.ui, surface = ProviderAudioSurface.PEQ) {
-                        HiByPeqSurface(
-                            state = peq,
-                            presets = listOf(userPeq, neutralPeq),
-                            selectedBand = peqBand,
-                            onSelectedBandChange = { peqBand = it },
-                            onStateChange = AppSettings::setHibyPeqState,
-                            onPresetSelected = { preset ->
-                                if (preset.id == "neutral") {
-                                    AppSettings.setHibyPeqState(PeqState(enabled = peq.enabled, presetName = "Neutral"))
-                                }
-                            },
-                            onAction = { action ->
-                                when (action) {
-                                    HiByPresetAction.SAVE -> {
-                                        AppSettings.setHibyPeqState(peq.copy(presetName = "User preset"))
-                                        toast("PEQ preset saved")
+                        ReferenceFullScreenDialog(
+                            title = "HiBy PEQ",
+                            onDismissRequest = { editor = OutputEditor.NONE },
+                        ) {
+                            EditorStatus(
+                                if (qualityOptions && referenceMode != ReferenceEngineMode.POWERAMP && referenceMode != ReferenceEngineMode.BIT_PERFECT) {
+                                    "Changes are set and read back through HiBy SmartAv PEQ. Native status: ${engineStatus.hiby.detail}."
+                                } else {
+                                    "Saved only. Select Quality Options with HiBy or Hybrid to call the native PEQ engine."
+                                },
+                            )
+                            HiByPeqSurface(
+                                state = peq,
+                                presets = listOf(userPeq, neutralPeq),
+                                selectedBand = peqBand,
+                                onSelectedBandChange = { peqBand = it },
+                                onStateChange = AppSettings::setHibyPeqState,
+                                onPresetSelected = { preset ->
+                                    if (preset.id == "neutral") {
+                                        AppSettings.setHibyPeqState(PeqState(enabled = peq.enabled, presetName = "Neutral"))
                                     }
-                                    HiByPresetAction.IMPORT -> import(OutputEditor.PEQ)
-                                    HiByPresetAction.SHARE -> sharePeq()
-                                }
-                            },
-                        )
+                                },
+                                onAction = { action ->
+                                    when (action) {
+                                        HiByPresetAction.SAVE -> {
+                                            AppSettings.setHibyPeqState(peq.copy(presetName = "User preset"))
+                                            toast("PEQ preset saved")
+                                        }
+                                        HiByPresetAction.IMPORT -> import(OutputEditor.PEQ)
+                                        HiByPresetAction.SHARE -> sharePeq()
+                                    }
+                                },
+                            )
+                        }
                     }
                 }
                 OutputEditor.NONE -> Unit

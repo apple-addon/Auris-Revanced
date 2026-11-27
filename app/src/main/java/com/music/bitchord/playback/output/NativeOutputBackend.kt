@@ -51,6 +51,7 @@ internal object NativeOutputBridge : NativeOutputBackend {
             spec.channelCount,
             spec.audioSessionId,
             spec.requestedBufferFrames,
+            spec.audioDeviceId,
             requestExclusive,
         )
         return handle.takeIf { it != 0L } ?: throw NativeOutputException(openError("AAudio"))
@@ -106,6 +107,7 @@ internal object NativeOutputBridge : NativeOutputBackend {
         channelCount: Int,
         audioSessionId: Int,
         requestedBufferFrames: Int,
+        audioDeviceId: Int,
         requestExclusive: Boolean,
     ): Long
 

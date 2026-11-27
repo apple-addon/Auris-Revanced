@@ -38,8 +38,17 @@ class PowerampEqReducerTest {
         assertFloat(-1f, PowerampEqReducer.setBalance(state, -5f).balance)
         assertFloat(1f, PowerampEqReducer.setStereoWidth(state, 5f).stereoWidth)
         assertFloat(0.5f, PowerampEqReducer.setTempo(state, 0.1f).tempo)
-        assertFloat(2f, PowerampEqReducer.setTempo(state, 8f).tempo)
+        assertFloat(3f, PowerampEqReducer.setTempo(state, 8f).tempo)
         assertFloat(1f, PowerampEqReducer.setVolume(state, Float.POSITIVE_INFINITY).volume)
+    }
+
+    @Test
+    fun toneControlsUseNativeZeroToOneGain() {
+        val state = PowerampEqState()
+        assertFloat(0f, PowerampEqReducer.setBass(state, -1f).bassGain)
+        assertFloat(1f, PowerampEqReducer.setBass(state, 2f).bassGain)
+        assertFloat(0f, PowerampEqReducer.setTreble(state, -1f).trebleGain)
+        assertFloat(1f, PowerampEqReducer.setTreble(state, 2f).trebleGain)
     }
 
     @Test

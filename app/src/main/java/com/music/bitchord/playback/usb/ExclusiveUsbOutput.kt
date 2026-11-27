@@ -372,8 +372,8 @@ class ExclusiveUsbOutput(
      * There is no resampler on this path, so a rate the DAC's clock cannot
      * lock to must not be streamed anyway: that plays at the wrong pitch and
      * speed, with the underruns showing up as artifacts in quiet passages.
-     * The open fails closed instead, and the sink falls back to AudioTrack,
-     * which does resample properly.
+     * PCM may fall back to AudioTrack; raw DSD/DoP is rejected by the sink
+     * rather than reinterpreted as PCM.
      */
     fun configure(
         format: Format,
@@ -600,7 +600,7 @@ class ExclusiveUsbOutput(
         pcmEncoding: Int,
         dsdMode: DsdOutputMode? = null,
     ): Boolean {
-        var effectiveDsdMode = dsdMode
+        val effectiveDsdMode = dsdMode
         val manager = appContext.getSystemService(Context.USB_SERVICE) as UsbManager
         val usbDevice = manager.deviceList.values.firstOrNull { dev ->
             (0 until dev.interfaceCount).any {
@@ -662,7 +662,7 @@ class ExclusiveUsbOutput(
         // Fills clockSourceRateMap, which lets setSampleRate() prefer the
         // crystal whose GET_RANGE actually covers the track rate.
         usbAudio.querySupportedSampleRates()
-        var effectiveSampleRate = sampleRate
+        val effectiveSampleRate = sampleRate
 
         val selectedDsdAlt = when (effectiveDsdMode) {
             DsdOutputMode.NATIVE_RAW -> usbAudio.findRawDsdAltSetting(effectiveSampleRate, channelCount)
@@ -670,16 +670,9 @@ class ExclusiveUsbOutput(
             else -> null
         }
         if (effectiveDsdMode == DsdOutputMode.NATIVE_RAW && selectedDsdAlt == null) {
-            // Native raw is preferred, never invented: fall back to DoP only
-            // when a PCM24 alt at the matching carrier actually exists.
-            val dopRate = effectiveSampleRate * 2
-            val dopAlt = usbAudio.findDopAltSetting(dopRate, channelCount)
-            if (dopAlt != null) {
-                effectiveSampleRate = dopRate
-                effectiveDsdMode = DsdOutputMode.DOP
-            } else {
-                return failLocked("DAC exposes neither raw-DSD nor DoP at ${effectiveSampleRate}Hz")
-            }
+            // The extractor already emitted raw UAC2 slots. Selecting a DoP alt
+            // here cannot repacketize them, so there is no safe transport fallback.
+            return failLocked("DAC exposes no raw-DSD alt at ${effectiveSampleRate}Hz; select DoP or PCM before playback")
         }
         val dsdAlt = if (effectiveDsdMode == DsdOutputMode.DOP) {
             selectedDsdAlt ?: usbAudio.findDopAltSetting(effectiveSampleRate, channelCount)
@@ -694,7 +687,13 @@ class ExclusiveUsbOutput(
         }
         var rateSetBefore = usbAudio.setSampleRate(effectiveSampleRate)
         if (!usbAudio.setAltSetting(alt)) {
-            val fallbackAlt = usbAudio.findAltSetting(24, effectiveSampleRate, channelCount)
+            // DoP may use another PCM24 alt. Raw UAC2 must retain its real
+            // raw-DSD alt; a generic PCM alt would reinterpret the DSD slots.
+            val fallbackAlt = if (effectiveDsdMode == DsdOutputMode.NATIVE_RAW) {
+                null
+            } else {
+                usbAudio.findAltSetting(24, effectiveSampleRate, channelCount)
+            }
             if (fallbackAlt != null && fallbackAlt.first != alt && usbAudio.setAltSetting(fallbackAlt.first)) {
                 alt = fallbackAlt.first
                 wireBits = fallbackAlt.second

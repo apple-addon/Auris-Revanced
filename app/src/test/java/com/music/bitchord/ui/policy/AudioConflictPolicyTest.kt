@@ -165,6 +165,72 @@ class AudioConflictPolicyTest {
     }
 
     @Test
+    fun `Hybrid has the same HiBy USB ownership conflict`() {
+        val before = AudioPolicySettings(
+            qualityOptions = true,
+            referenceEngineMode = ReferenceEngineMode.POWERAMP,
+            outputDriver = OutputDriver.USB_EXCLUSIVE,
+        )
+        val pending = request(before, AudioPolicyChange.SetReferenceEngineMode(ReferenceEngineMode.HYBRID))
+        assertEquals(AudioConflictKind.COMPETING_EXCLUSIVE_USB_SINKS, pending.state.pendingConflict?.kind)
+
+        val confirmed = AudioConflictPolicy.reduce(pending.state, AudioPolicyIntent.ConfirmConflict)
+        assertEquals(OutputDriver.AUDIO_TRACK, confirmed.state.settings.outputDriver)
+        assertEquals(ReferenceEngineMode.HYBRID, confirmed.state.settings.referenceEngineMode)
+        assertEquals(ExclusiveUsbSink.HIBY_NATIVE, confirmed.state.settings.exclusiveUsbSink)
+    }
+
+    @Test
+    fun `USB system bit-perfect retires Quality Options before selection`() {
+        val before = AudioPolicySettings(
+            qualityOptions = true,
+            referenceEngineMode = ReferenceEngineMode.POWERAMP,
+            outputDriver = OutputDriver.AUDIO_TRACK,
+        )
+        val pending = request(before, AudioPolicyChange.SetOutputDriver(OutputDriver.USB_SYSTEM_BIT_PERFECT))
+        assertEquals(AudioConflictKind.BIT_PERFECT_VS_QUALITY_DSP, pending.state.pendingConflict?.kind)
+        assertEquals(before, pending.state.settings)
+
+        val confirmed = AudioConflictPolicy.reduce(pending.state, AudioPolicyIntent.ConfirmConflict)
+        assertEquals(
+            listOf(
+                AudioPolicyOperation.SetQualityOptions(false),
+                AudioPolicyOperation.SetOutputDriver(OutputDriver.USB_SYSTEM_BIT_PERFECT),
+            ),
+            confirmed.transaction?.operations,
+        )
+        assertEquals(
+            before.copy(
+                qualityOptions = false,
+                outputDriver = OutputDriver.USB_SYSTEM_BIT_PERFECT,
+            ),
+            confirmed.state.settings,
+        )
+    }
+
+    @Test
+    fun `enabling DSP retires a selected USB system direct path first`() {
+        val before = AudioPolicySettings(
+            outputDriver = OutputDriver.USB_SYSTEM_BIT_PERFECT,
+        )
+        val pending = request(before, AudioPolicyChange.SetQualityOptions(true))
+        assertEquals(AudioConflictKind.BIT_PERFECT_VS_QUALITY_DSP, pending.state.pendingConflict?.kind)
+
+        val confirmed = AudioConflictPolicy.reduce(pending.state, AudioPolicyIntent.ConfirmConflict)
+        assertEquals(
+            listOf(
+                AudioPolicyOperation.SetOutputDriver(OutputDriver.AUDIO_TRACK),
+                AudioPolicyOperation.SetQualityOptions(true),
+            ),
+            confirmed.transaction?.operations,
+        )
+        assertEquals(
+            before.copy(outputDriver = OutputDriver.AUDIO_TRACK, qualityOptions = true),
+            confirmed.state.settings,
+        )
+    }
+
+    @Test
     fun `Bit-perfect and USB driver sharing one Auris sink do not conflict`() {
         val before = AudioPolicySettings(bitPerfect = true)
         val result = request(before, AudioPolicyChange.SetOutputDriver(OutputDriver.USB_EXCLUSIVE))
@@ -216,6 +282,55 @@ class AudioConflictPolicyTest {
             val result = request(settings, change)
             assertNull(result.state.pendingConflict)
             assertTrue(result.transaction != null || change.applyTo(settings) == settings)
+        }
+    }
+
+    @Test
+    fun `cancelling output driver conflict keeps the previous scalar`() {
+        val before = AudioPolicySettings(
+            qualityOptions = true,
+            referenceEngineMode = ReferenceEngineMode.HIBY,
+            outputDriver = OutputDriver.AUDIO_TRACK,
+        )
+        val pending = request(before, AudioPolicyChange.SetOutputDriver(OutputDriver.USB_EXCLUSIVE))
+        assertEquals(AudioConflictKind.COMPETING_EXCLUSIVE_USB_SINKS, pending.state.pendingConflict?.kind)
+        assertNull(pending.transaction)
+
+        val cancelled = AudioConflictPolicy.reduce(pending.state, AudioPolicyIntent.CancelConflict)
+
+        assertSame(before, cancelled.state.settings)
+        assertEquals(OutputDriver.AUDIO_TRACK, cancelled.state.settings.outputDriver)
+        assertNull(cancelled.state.pendingConflict)
+        assertNull(cancelled.transaction)
+    }
+
+    @Test
+    fun `inactive DSP and independent output driver combinations stay legal`() {
+        val states = listOf(
+            AudioPolicySettings(
+                qualityOptions = true,
+                referenceEngineMode = ReferenceEngineMode.BIT_PERFECT,
+            ) to OutputDriver.USB_EXCLUSIVE,
+            AudioPolicySettings(
+                qualityOptions = false,
+                referenceEngineMode = ReferenceEngineMode.HIBY,
+                outputDriver = OutputDriver.HI_RES,
+            ) to OutputDriver.AAUDIO,
+            AudioPolicySettings(
+                bitPerfect = true,
+                qualityOptions = true,
+                outputDriver = OutputDriver.HI_RES,
+            ) to OutputDriver.OPENSL_ES,
+        )
+
+        states.forEach { (before, driver) ->
+            val result = request(before, AudioPolicyChange.SetOutputDriver(driver))
+            assertNull(result.state.pendingConflict)
+            assertEquals(before.copy(outputDriver = driver), result.state.settings)
+            assertEquals(
+                listOf(AudioPolicyOperation.SetOutputDriver(driver)),
+                result.transaction?.operations,
+            )
         }
     }
 

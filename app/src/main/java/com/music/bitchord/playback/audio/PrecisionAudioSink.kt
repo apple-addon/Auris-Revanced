@@ -13,12 +13,14 @@ import androidx.media3.exoplayer.audio.ForwardingAudioSink
 import com.music.bitchord.BuildConfig
 import com.music.bitchord.data.TrackLog
 import com.music.bitchord.data.settings.AppSettings
+import com.music.bitchord.data.settings.ReferenceEngineMode
 import com.music.bitchord.playback.AudioOutputStatus
 import com.music.bitchord.playback.audio.usb.DirectAudioOutput
 import com.music.bitchord.playback.audio.drivers.DsdOutputMode
 import com.music.bitchord.playback.usb.ExclusiveUsbOutput
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import kotlin.math.pow
 
 /**
  * Precision audio sink intercepting decoder PCM buffers before Media3's internal
@@ -302,8 +304,14 @@ class PrecisionAudioSink(
                         delegateEncoding = delegateFormat.pcmEncoding,
                     )
                     if (startExclusiveIfWanted(format)) exclusiveAdoptionSuppressed = true
+                    requireExclusiveForRawDsd(format)
                     return
                 } catch (e: Exception) {
+                    requireExclusiveForRawDsd(format)
+                    if (nativeReferenceRequested()) {
+                        dspChain.reset()
+                        throw AudioSink.ConfigurationException("INIT FAILED: ${e.message ?: "native output configure failed"}", format)
+                    }
                     // If the Float32 delegate config failed, try PCM16 before aborting precision
                     if (targetEncoding != PcmEncoding.PCM_16BIT) {
                         try {
@@ -328,8 +336,14 @@ class PrecisionAudioSink(
                                 delegateEncoding = pcm16Format.pcmEncoding,
                             )
                             if (startExclusiveIfWanted(format)) exclusiveAdoptionSuppressed = true
+                            requireExclusiveForRawDsd(format)
                             return
                         } catch (e2: Exception) {
+                            requireExclusiveForRawDsd(format)
+                            if (nativeReferenceRequested()) {
+                                dspChain.reset()
+                                throw AudioSink.ConfigurationException("INIT FAILED: ${e2.message ?: "native output configure failed"}", format)
+                            }
                             // Delegate configuration failed completely; fall back safely
                         }
                     }
@@ -361,6 +375,11 @@ class PrecisionAudioSink(
                 dspFormat = "Legacy PCM",
                 dspAvailable = false,
             )
+        }
+        requireExclusiveForRawDsd(format)
+        if (nativeReferenceRequested()) {
+            dspChain.reset()
+            throw AudioSink.ConfigurationException("INIT FAILED: native reference output could not configure", format)
         }
         delegate.configure(audioSinkConfig)
         logConfig(
@@ -422,8 +441,8 @@ class PrecisionAudioSink(
             )
         }.getOrDefault(false)
         // A DAC that latched a different clock would get source-rate bytes fed
-        // to the wrong rate. This sink has no resampler, so the honest answer
-        // is the mixer fallback rather than a pitch-shifted stream.
+        // to the wrong rate. PCM may use the mixer fallback; raw DSD/DoP is
+        // rejected by requireExclusiveForRawDsd instead of becoming noise.
         if (started && session.currentRateHz() != format.sampleRate) {
             val latched = session.currentRateHz()
             runCatching { session.reset() }
@@ -487,6 +506,19 @@ class PrecisionAudioSink(
         )
     }
 
+    private fun nativeReferenceRequested(): Boolean = AppSettings.qualityOptions.value &&
+        AppSettings.referenceEngineMode.value != ReferenceEngineMode.BIT_PERFECT
+
+    private fun requireExclusiveForRawDsd(format: Format) {
+        if (!isAudible() || exclusiveActive || dsdModeFor(format) == null) return
+        val reason = exclusiveUsb?.lastFailureReason?.takeIf { it.isNotBlank() }
+            ?: "exclusive USB is not active"
+        throw AudioSink.ConfigurationException(
+            "INIT FAILED: raw DSD/DoP cannot enter the Android mixer ($reason); select PCM DSD output or fix the USB route",
+            format,
+        )
+    }
+
     private enum class ExclusiveOutcome { CONSUMED, BACKPRESSURE, FALL_THROUGH }
 
     /**
@@ -527,6 +559,7 @@ class PrecisionAudioSink(
         timestampedInputTimeUs = C.TIME_UNSET
         framesEmittedForInput = 0L
         if (startExclusiveIfWanted(format)) exclusiveAdoptionSuppressed = true
+        requireExclusiveForRawDsd(format)
     }
 
     /**
@@ -696,24 +729,35 @@ class PrecisionAudioSink(
         // The curve is the same one the exclusive USB route and the DAC's own
         // control use, so the slider means the same thing on every path.
         val mixerOutOfPath = skipDsp && mixerBypassed()
+        val appOwnsVolume = mixerOutOfPath || (nativeReferenceRequested() && !skipDsp)
+        val nativeGainCompensation = if (nativeReferenceRequested() &&
+            AppSettings.referenceEngineMode.value != ReferenceEngineMode.POWERAMP
+        ) {
+            10f.pow(AppSettings.hibyGainCompensationDb.value / 20f)
+        } else {
+            1f
+        }
         val userGain = if (dsdDirect) {
             1f // DoP/raw DSD is never sample-scaled.
-        } else if (mixerOutOfPath) {
-            ListenerVolumePolicy.perceptualGain(AppSettings.playerVolume.value)
+        } else if (appOwnsVolume) {
+            ListenerVolumePolicy.perceptualGain(AppSettings.playerVolume.value) * nativeGainCompensation
         } else {
             1f
         }
         // The readout says where the level is applied: the system mixer when
         // it is in the path, and the app's own gain when it is not.
         publishVolumeApplication(
-            if (mixerOutOfPath) {
+            if (appOwnsVolume) {
                 VolumeApplication.APP_SOFTWARE
             } else {
                 VolumeApplication.SYSTEM_MIXER
             },
             userGain,
-            if (mixerOutOfPath) {
-                ListenerVolumePolicy.offsetDb(AppSettings.playerVolume.value)
+            if (appOwnsVolume) {
+                ListenerVolumePolicy.offsetDb(AppSettings.playerVolume.value) +
+                    if (nativeReferenceRequested() &&
+                        AppSettings.referenceEngineMode.value != ReferenceEngineMode.POWERAMP
+                    ) AppSettings.hibyGainCompensationDb.value.toDouble() else 0.0
             } else {
                 null
             },
@@ -943,9 +987,7 @@ class PrecisionAudioSink(
         passthroughBuffer = null
         passthroughPresentationTimeUs = C.TIME_UNSET
         passthroughAccessUnitCount = 0
-        if (isPrecisionActive) {
-            dspChain.reset()
-        }
+        dspChain.reset()
         isPrecisionActive = false
         inputPcmEncoding = null
         targetOutputEncoding = null

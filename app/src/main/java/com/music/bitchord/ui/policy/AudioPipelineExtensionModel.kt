@@ -7,6 +7,8 @@ import com.music.bitchord.playback.output.NativeOutputSharing
 import com.music.bitchord.playback.output.NativeOutputTelemetry
 import com.music.bitchord.playback.reference.NativeLoadState
 import com.music.bitchord.playback.reference.NativeEngineStatus
+import com.music.bitchord.playback.reference.NativeStreamState
+import com.music.bitchord.playback.reference.NativeStreamStatus
 import com.music.bitchord.playback.reference.ReferenceEngineSnapshot
 import com.music.bitchord.playback.reference.referenceTelemetrySummary
 import java.util.Locale
@@ -106,8 +108,9 @@ fun buildAudioPipelineExtension(
     val summaryStatus = pipelineSummaryStatus(summary)
     val output = nativeOutput?.toAudioPipelineOutput()
         ?: engines.driverTelemetry?.toAudioPipelineOutput()
-    val referenceOutputFailure = engines.outputDetail?.takeIf { it.startsWith("INIT FAILED: ") }
-    val nativeDeduction = summary.takeIf { it.startsWith("INIT FAILED: ") }?.let {
+    val referenceOutputFailure = listOfNotNull(engines.pawsOutput.detail, engines.hibyOutput.detail)
+        .firstOrNull { it.isNativeFailure() }
+    val nativeDeduction = summary.takeIf { it.isNativeFailure() }?.let {
         AudioPipelineDeduction(label = it, detail = "Native reference path is not processing ExoPlayer PCM")
     }
     val outputDeduction = (output?.failure ?: referenceOutputFailure)?.let {
@@ -130,14 +133,14 @@ fun buildAudioPipelineExtension(
                 qualityOptions = qualityOptions,
                 mode = mode,
                 status = engines.paws,
-                hibyOutputActive = false,
+                stream = engines.pawsOutput,
             ),
             nativeEngineBadge(
                 owner = NativeEngineBadgeOwner.HIBY,
                 qualityOptions = qualityOptions,
                 mode = mode,
                 status = engines.hiby,
-                hibyOutputActive = engines.hibyOutputActive,
+                stream = engines.hibyOutput,
             ),
         ),
         deductions = deductions,
@@ -176,7 +179,7 @@ fun OutputDriverTelemetry.toAudioPipelineOutput(): AudioPipelineOutputModel =
         xruns = xruns?.takeIf { it >= 0 },
         bufferMs = bufferMs.takeIf { it > 0 },
         detail = detail,
-        failure = detail?.takeIf { it.startsWith("INIT FAILED: ") },
+        failure = detail?.takeIf { it.isNativeFailure() },
     )
 
 fun NativeOutputTelemetry.toAudioPipelineOutput(): AudioPipelineOutputModel =
@@ -206,7 +209,7 @@ private fun nativeEngineBadge(
     qualityOptions: Boolean,
     mode: ReferenceEngineMode,
     status: NativeEngineStatus,
-    hibyOutputActive: Boolean,
+    stream: NativeStreamStatus,
 ): NativeEngineBadge {
     val selected = when (owner) {
         NativeEngineBadgeOwner.PAWS -> mode == ReferenceEngineMode.POWERAMP || mode == ReferenceEngineMode.HYBRID
@@ -227,6 +230,16 @@ private fun nativeEngineBadge(
             detail = "Not selected by ${mode.label}",
         )
     }
+    if (stream.state == NativeStreamState.FAILED && status.state != NativeLoadState.FAILED) {
+        val failure = stream.detail?.takeIf { it.isNativeFailure() } ?: "PCM FAILED: native stream failed"
+        return NativeEngineBadge(
+            owner = owner,
+            label = failure,
+            status = AudioPipelineStatus.FAILED,
+            detail = stream.detail ?: failure,
+            capabilities = status.capabilities.toList(),
+        )
+    }
     return when (status.state) {
         NativeLoadState.FAILED -> NativeEngineBadge(
             owner = owner,
@@ -243,35 +256,52 @@ private fun nativeEngineBadge(
             capabilities = status.capabilities.toList(),
         )
         NativeLoadState.LOADED_ACTIVE -> when (owner) {
-            NativeEngineBadgeOwner.PAWS -> NativeEngineBadge(
-                owner = owner,
-                // A loaded library is not a PCM processor. In particular this
-                // never says PAWS NATIVE ACTIVE.
-                label = "PAWS LIBRARY LOADED",
-                status = AudioPipelineStatus.READY,
-                detail = status.detail,
-                capabilities = status.capabilities.toList(),
-            )
-            NativeEngineBadgeOwner.HIBY -> NativeEngineBadge(
-                owner = owner,
-                label = if (hibyOutputActive) "HIBY NATIVE ACTIVE" else "HIBY NATIVE READY",
-                status = if (hibyOutputActive) AudioPipelineStatus.ACTIVE else AudioPipelineStatus.READY,
-                detail = status.detail,
-                capabilities = status.capabilities.toList(),
-            )
+            NativeEngineBadgeOwner.PAWS -> {
+                val active = stream.state == NativeStreamState.ACTIVE && stream.producedFrames > 0
+                NativeEngineBadge(
+                    owner = owner,
+                    label = when {
+                        active -> "PAWS NATIVE ACTIVE"
+                        stream.state == NativeStreamState.OPEN -> "PAWS GRAPH READY"
+                        else -> "PAWS NATIVE READY"
+                    },
+                    status = if (active) AudioPipelineStatus.ACTIVE else AudioPipelineStatus.READY,
+                    detail = stream.detail ?: status.detail,
+                    capabilities = status.capabilities.toList(),
+                )
+            }
+            NativeEngineBadgeOwner.HIBY -> {
+                val active = stream.state == NativeStreamState.ACTIVE && stream.producedFrames > 0
+                NativeEngineBadge(
+                    owner = owner,
+                    label = if (active) "HIBY NATIVE ACTIVE" else "HIBY NATIVE READY",
+                    status = if (active) AudioPipelineStatus.ACTIVE else AudioPipelineStatus.READY,
+                    detail = stream.detail ?: status.detail,
+                    capabilities = status.capabilities.toList(),
+                )
+            }
         }
     }
 }
 
 private fun pipelineSummaryStatus(summary: String): AudioPipelineStatus = when {
-    summary.startsWith("INIT FAILED: ") -> AudioPipelineStatus.FAILED
-    summary == "HIBY NATIVE ACTIVE" -> AudioPipelineStatus.ACTIVE
-    summary == "HIBY NATIVE READY" -> AudioPipelineStatus.READY
+    summary.isNativeFailure() -> AudioPipelineStatus.FAILED
+    summary == "PAWS NATIVE ACTIVE" ||
+        summary == "HIBY NATIVE ACTIVE" ||
+        summary == "HYBRID NATIVE ACTIVE" -> AudioPipelineStatus.ACTIVE
+    summary == "PAWS NATIVE READY" ||
+        summary == "PAWS GRAPH READY / WAITING FOR PCM" ||
+        summary == "HIBY NATIVE READY" ||
+        summary == "HIBY OUTPUT READY / WAITING FOR PCM" ||
+        summary == "HYBRID NATIVE READY" -> AudioPipelineStatus.READY
     summary == "Quality Options OFF" ||
         summary == "BIT-PERFECT DIRECT" ||
         summary.contains(" BYPASSED: ") -> AudioPipelineStatus.BYPASSED
     else -> AudioPipelineStatus.UNKNOWN
 }
+
+private fun String.isNativeFailure(): Boolean =
+    startsWith("INIT FAILED: ") || startsWith("PCM FAILED: ")
 
 private fun outputTimelineDetail(output: AudioPipelineOutputModel): String {
     output.failure?.let { return it }

@@ -118,6 +118,9 @@ bool OpenSlEsOutput::initialize(std::string &error) {
     SLAndroidConfigurationItf configuration = nullptr;
     if ((*player_object_)->GetInterface(player_object_, SL_IID_ANDROIDCONFIGURATION,
             &configuration) == SL_RESULT_SUCCESS && configuration) {
+        const SLint32 stream_type = SL_ANDROID_STREAM_MEDIA;
+        (*configuration)->SetConfiguration(configuration, SL_ANDROID_KEY_STREAM_TYPE,
+                &stream_type, sizeof(stream_type));
         const SLuint32 latency = SL_ANDROID_PERFORMANCE_LATENCY;
         // Request only. Unlike PCM format validation, lack of a low-latency
         // performance mode does not invalidate an otherwise real float stream.
@@ -178,7 +181,7 @@ void OpenSlEsOutput::close_locked() {
     }
 }
 
-int OpenSlEsOutput::enqueue_buffer(uint32_t index) {
+int OpenSlEsOutput::enqueue_buffer(uint32_t index, bool count_underrun) {
     float *buffer = buffers_.get() + static_cast<size_t>(index) * buffer_frames_ * spec_.channels;
     const size_t pcm_frames = ring_->read(buffer, buffer_frames_);
     if (pcm_frames < buffer_frames_) {
@@ -191,14 +194,15 @@ int OpenSlEsOutput::enqueue_buffer(uint32_t index) {
         set_failure(code);
         return code;
     }
-    accounting_.record_enqueued(buffer_frames_, static_cast<uint32_t>(pcm_frames));
+    accounting_.record_enqueued(
+            buffer_frames_, static_cast<uint32_t>(pcm_frames), count_underrun);
     return 0;
 }
 
 int OpenSlEsOutput::prime_locked() {
     callback_buffer_index_ = 0;
     for (uint32_t i = 0; i < kBufferCount; ++i) {
-        if (int result = enqueue_buffer(i)) return result;
+        if (int result = enqueue_buffer(i, /*count_underrun=*/false)) return result;
     }
     primed_ = true;
     return 0;

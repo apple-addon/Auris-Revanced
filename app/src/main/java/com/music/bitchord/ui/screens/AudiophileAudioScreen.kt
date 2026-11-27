@@ -15,12 +15,15 @@ import com.music.bitchord.data.NerdStats
 import com.music.bitchord.data.settings.AppSettings
 import com.music.bitchord.playback.AudioOutputStatus
 import com.music.bitchord.playback.AudioRouting
+import com.music.bitchord.playback.audio.TransportType
+import com.music.bitchord.playback.audio.drivers.DsdOutputMode
 import com.music.bitchord.playback.audio.drivers.OutputDriver
 import com.music.bitchord.playback.reference.ReferenceEngineSnapshot
 import com.music.bitchord.playback.reference.ReferenceEngineLoader
 import com.music.bitchord.ui.audiophile.AudioInfoEntry
 import com.music.bitchord.ui.audiophile.AudioOutputRouteId
 import com.music.bitchord.ui.audiophile.AudiophileAudioState
+import com.music.bitchord.ui.audiophile.AudiophileOutputRouting
 import com.music.bitchord.ui.audiophile.OutputConnectionStatus
 import com.music.bitchord.ui.audiophile.OutputDeviceKind
 import com.music.bitchord.ui.audiophile.OutputSampleFormat
@@ -45,7 +48,13 @@ internal fun AudiophileAudioScreen(
     val output by AudioOutputStatus.current.collectAsStateWithLifecycle()
     val nerdStats by NerdStats.current.collectAsStateWithLifecycle()
     val engines by ReferenceEngineLoader.status.collectAsStateWithLifecycle()
+    val dsdOutputMode by AppSettings.dsdOutputMode.collectAsStateWithLifecycle()
     var uiState by remember { mutableStateOf(AudiophileAudioUiState()) }
+    val dsdSource = nerdStats?.mimeType?.startsWith("audio/dsd") == true || nerdStats?.container == "SACD ISO"
+    val rawDsdOutput = nerdStats?.mimeType?.startsWith("audio/dsd") == true &&
+        dsdOutputMode != DsdOutputMode.PCM &&
+        output.exclusiveUsbActive &&
+        output.transportType == TransportType.DIRECT_USB
 
     val audioInfo = AudioInfoState(
         trackTitle = nerdStats?.sourceName ?: "No active track",
@@ -57,10 +66,15 @@ internal fun AudiophileAudioScreen(
         ),
         processing = buildList {
             add(AudioInfoEntry("Reference graph", ReferenceEngineLoader.telemetrySummary()))
-            if (nerdStats?.mimeType?.startsWith("audio/dsd") == true ||
-                nerdStats?.container == "SACD ISO"
-            ) {
-                add(AudioInfoEntry("DSD / SACD", "Decoded to Float32 PCM by the native decimator; raw DSD/DoP is not claimed"))
+            if (dsdSource) {
+                add(AudioInfoEntry(
+                    "DSD / SACD",
+                    if (rawDsdOutput) {
+                        "${dsdOutputMode.label} over exclusive USB; packed DSD unchanged and DSP bypassed"
+                    } else {
+                        "Decoded to Float32 PCM by the native decimator; raw DSD/DoP is not active"
+                    },
+                ))
             }
             add(AudioInfoEntry("Tracker modules", "MOD/IT/S3M/XM signature detection only; no tracker decoder is advertised"))
             add(AudioInfoEntry(
@@ -120,7 +134,7 @@ private fun AudiophileAudioState.withRuntimeOutputs(
     output: AudioOutputStatus.Snapshot,
     engines: ReferenceEngineSnapshot,
 ): AudiophileAudioState {
-    val driver = AppSettings.outputDriver.value
+    val driver = outputDriver
     val actualRate = engines.driverTelemetry?.sampleRateHz?.takeIf { it > 0 } ?: output.actualSampleRateHz
     val actualFormat = when (output.actualEncoding) {
         AudioFormat.ENCODING_PCM_16BIT -> OutputSampleFormat.PCM_16
@@ -136,37 +150,78 @@ private fun AudiophileAudioState.withRuntimeOutputs(
         AudioRouting.Kind.USB -> OutputDeviceKind.USB_DAC
         AudioRouting.Kind.HDMI, AudioRouting.Kind.OTHER -> OutputDeviceKind.OTHER
     }
-    return copy(
-        outputs = outputs.map { route ->
-            val selected = when (route.id) {
-                AudioOutputRouteId.OPEN_SL_ES -> driver == OutputDriver.OPENSL_ES
-                AudioOutputRouteId.HI_RES -> driver == OutputDriver.HI_RES
-                AudioOutputRouteId.AAUDIO -> driver == OutputDriver.AAUDIO
-                AudioOutputRouteId.USB_EXCLUSIVE -> driver == OutputDriver.USB_EXCLUSIVE ||
-                    driver == OutputDriver.USB_SYSTEM_BIT_PERFECT
-                AudioOutputRouteId.AUDIO_TRACK -> driver == OutputDriver.AUDIO_TRACK
-                AudioOutputRouteId.CHROMECAST -> false
+    val reconciled = AudiophileOutputRouting.reconcile(this, driver)
+    val backendActive: Boolean? = when (driver) {
+        OutputDriver.USB_EXCLUSIVE -> output.exclusiveUsbActive
+        OutputDriver.USB_SYSTEM_BIT_PERFECT -> output.bitPerfectMixer?.active == true
+        else -> null
+    }
+    val backendProblem = when {
+        backendActive != null && !backendActive && activeKind == OutputDeviceKind.USB_DAC ->
+            if (driver == OutputDriver.USB_EXCLUSIVE) {
+                output.exclusiveUsbDetail ?: "USB Exclusive is not active; the system path is the fallback."
+            } else {
+                output.bitPerfectMixer?.detail
+                    ?: "USB System Bit-Perfect is not confirmed active; the mixer may resample."
             }
+        backendActive != null && !backendActive ->
+            "No USB DAC is connected; ${driver.label} is selected but not in the signal path."
+        else -> null
+    }
+    return reconciled.copy(
+        outputs = reconciled.outputs.map { route ->
+            val selected = route.id != AudioOutputRouteId.CHROMECAST && route.enabled
+            val backendEligible = selected && backendActive != false
+            val profiles = route.profiles.map { profile ->
+                val active = backendEligible && when (profile.kind) {
+                    OutputDeviceKind.NAMED -> profile.name == output.deviceName
+                    else -> profile.kind == activeKind
+                }
+                if (!active) {
+                    if (selected && profile.connectionStatus == OutputConnectionStatus.ACTIVE) {
+                        return@map profile.copy(
+                            connectionStatus = OutputConnectionStatus.AVAILABLE,
+                            statusDetail = "",
+                            actualSampleRateHz = null,
+                            actualSampleFormat = null,
+                        )
+                    }
+                    return@map profile
+                }
+                val requestedRate = profile.sampleRateHz
+                val rateDetail = if (actualRate != null && requestedRate != actualRate) {
+                    "Requested $requestedRate Hz; actual stream $actualRate Hz. No rate conversion is claimed."
+                } else {
+                    "Actual output stream reported by the active driver"
+                }
+                profile.copy(
+                    connectionStatus = OutputConnectionStatus.ACTIVE,
+                    statusDetail = rateDetail,
+                    actualSampleRateHz = actualRate,
+                    actualSampleFormat = actualFormat,
+                )
+            }
+            val anyActive = profiles.any { it.connectionStatus == OutputConnectionStatus.ACTIVE }
+            val activeDetail = when (driver) {
+                OutputDriver.USB_EXCLUSIVE -> output.exclusiveUsbDetail
+                OutputDriver.USB_SYSTEM_BIT_PERFECT -> output.bitPerfectMixer?.detail
+                else -> null
+            } ?: route.statusDetail
             route.copy(
-                status = if (selected) OutputConnectionStatus.ACTIVE else route.status,
-                profiles = route.profiles.map { profile ->
-                    val active = selected && when (profile.kind) {
-                        OutputDeviceKind.NAMED -> profile.name == output.deviceName
-                        else -> profile.kind == activeKind
-                    }
-                    if (!active) return@map profile
-                    val requestedRate = profile.sampleRateHz
-                    val rateDetail = if (actualRate != null && requestedRate != actualRate) {
-                        "Requested $requestedRate Hz; actual stream $actualRate Hz. No rate conversion is claimed."
-                    } else {
-                        "Actual output stream reported by the active driver"
-                    }
-                    profile.copy(
-                        connectionStatus = OutputConnectionStatus.ACTIVE,
-                        statusDetail = rateDetail,
-                        actualSampleRateHz = actualRate,
-                        actualSampleFormat = actualFormat,
-                    )
+                profiles = profiles,
+                // Route-level ACTIVE is derived from an actually active device profile and,
+                // for USB backends, from the requested transport being genuinely in use.
+                status = when {
+                    selected && backendProblem != null -> OutputConnectionStatus.UNSUPPORTED
+                    selected && anyActive -> OutputConnectionStatus.ACTIVE
+                    route.status == OutputConnectionStatus.ACTIVE -> OutputConnectionStatus.AVAILABLE
+                    else -> route.status
+                },
+                statusDetail = when {
+                    selected && backendProblem != null -> backendProblem
+                    selected && anyActive -> activeDetail
+                    route.status == OutputConnectionStatus.ACTIVE -> ""
+                    else -> route.statusDetail
                 },
             )
         },

@@ -15,11 +15,12 @@ struct OutputSpec {
     int32_t channels = 0;
     int32_t audio_session_id = 0;
     int32_t requested_buffer_frames = 0;
+    int32_t audio_device_id = 0;
 
     int32_t frame_bytes() const { return channels * static_cast<int32_t>(sizeof(float)); }
     bool valid() const {
         return sample_rate > 0 && sample_rate <= 768000 && channels > 0 && channels <= 32 &&
-                requested_buffer_frames >= 0;
+                requested_buffer_frames >= 0 && audio_device_id >= 0;
     }
 };
 

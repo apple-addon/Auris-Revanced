@@ -116,7 +116,12 @@ import com.music.bitchord.playback.policy.ReplayGainSource as PolicyReplayGainSo
 import com.music.bitchord.ui.audiophile.ReplayGainMode
 import com.music.bitchord.ui.audiophile.ReplayGainSource as UiReplayGainSource
 import com.music.bitchord.playback.reference.AurisAudioOutputProvider
+import com.music.bitchord.playback.reference.HibyNativeTrackWriter
+import com.music.bitchord.playback.reference.NativeLoadState
+import com.music.bitchord.playback.reference.NativeStreamState
 import com.music.bitchord.playback.reference.ReferenceEngineLoader
+import com.music.bitchord.playback.reference.paws.PawsControlState
+import com.music.bitchord.playback.reference.paws.PawsEqBand
 import com.music.bitchord.data.settings.ReferenceEngineMode
 import com.music.bitchord.playback.cast.CastController
 import com.music.bitchord.playback.cast.CastPlayback
@@ -638,7 +643,7 @@ class PlaybackService : MediaLibraryService() {
             // picker for "go back to following the system", so a stuck choice
             // would be a picker that had quietly broken the obvious behaviour.
             AudioRouting.forget()
-            requestOutputReconfiguration()
+            requestOutputReconfiguration(forceRebuild = outputChangeRequiresNewEndpoint())
         }
         override fun onAudioDevicesRemoved(removedDevices: Array<AudioDeviceInfo>) {
             // A chosen output that has been unplugged is no longer a choice.
@@ -648,7 +653,7 @@ class PlaybackService : MediaLibraryService() {
             if (removedDevices.any { it.id == AudioRouting.selectedId.value }) {
                 AudioRouting.forget()
             }
-            requestOutputReconfiguration()
+            requestOutputReconfiguration(forceRebuild = outputChangeRequiresNewEndpoint())
         }
     }
 
@@ -667,6 +672,10 @@ class PlaybackService : MediaLibraryService() {
     private var spare: ExoPlayer? = null
 
     private var crossfade: CrossfadeController? = null
+    // PAWS owns one process-global PCM graph. Never feed it both halves of a
+    // blend; the listener's fade choices remain persisted and resume on exit.
+    private var crossfadeBeforePaws: Int? = null
+    private var smartFadeBeforePaws: Boolean? = null
 
     /**
      * What the players currently in hand were built for.
@@ -1167,9 +1176,25 @@ class PlaybackService : MediaLibraryService() {
          * broken app looks like from the outside.
          */
         override fun onPlayerError(error: PlaybackException) {
-            // The player this fired on, which is by definition the one the
-            // session is currently pointed at.
+            // Native graph/ABI/format failures cannot be repaired by deleting a
+            // stream cache or skipping a valid song. Preserve their exact state.
             val exoPlayer = player ?: return
+            val snapshot = ReferenceEngineLoader.status.value
+            val nativeFailure = AppSettings.qualityOptions.value && when (AppSettings.referenceEngineMode.value) {
+                ReferenceEngineMode.POWERAMP ->
+                    snapshot.paws.state == NativeLoadState.FAILED || snapshot.pawsOutput.state == NativeStreamState.FAILED
+                ReferenceEngineMode.HIBY ->
+                    snapshot.hiby.state == NativeLoadState.FAILED || snapshot.hibyOutput.state == NativeStreamState.FAILED
+                ReferenceEngineMode.HYBRID ->
+                    snapshot.paws.state == NativeLoadState.FAILED || snapshot.hiby.state == NativeLoadState.FAILED ||
+                        snapshot.pawsOutput.state == NativeStreamState.FAILED || snapshot.hibyOutput.state == NativeStreamState.FAILED
+                ReferenceEngineMode.BIT_PERFECT -> false
+            }
+            if (nativeFailure) {
+                exoPlayer.playWhenReady = false
+                TrackLog.w("AUDIO_OUT", ReferenceEngineLoader.telemetrySummary(), about = exoPlayer.currentMediaItem?.mediaId)
+                return
+            }
             recoverFrom(error, exoPlayer)
         }
 
@@ -1462,6 +1487,12 @@ class PlaybackService : MediaLibraryService() {
         observeCustomLayoutInputs()
         startOutputTracking()
         installMediaSources()
+        // Native renderers must not configure against a null host during cold
+        // auto-resume or an immediate manual play. Loading is main-thread safe;
+        // it is never deferred onto ExoPlayer's audio thread.
+        if (AppSettings.qualityOptions.value) {
+            ReferenceEngineLoader.ensureLoaded(this)
+        }
         val (exoPlayer, sparePlayer) = createPlayers()
 
         AppSettings.audioSessionId.value = exoPlayer.audioSessionId
@@ -2202,7 +2233,7 @@ class PlaybackService : MediaLibraryService() {
             // The listener's speed, not the active player's: straight after an
             // Advanced Automix blend the active player is still easing off its
             // beatmatch stretch, and copying that would keep it for good.
-            standbyPlayer.setPlaybackSpeed(AppSettings.playbackSpeed.value)
+            standbyPlayer.setPlaybackSpeed(playbackSpeedForCurrentEngine())
             standbyPlayer.volume = 0f
             standbyPlayer.setMediaItems(newItems, currentIndex, alignedStartPos)
             spareLoudness().track(mediaId, nextMediaIdOf(standbyPlayer))
@@ -2721,7 +2752,7 @@ class PlaybackService : MediaLibraryService() {
             standby.shuffleModeEnabled = active.shuffleModeEnabled
             // The listener's speed, not the active player's — see the same
             // line in [smoothSwapCurrentTrackVersion].
-            standby.setPlaybackSpeed(AppSettings.playbackSpeed.value)
+            standby.setPlaybackSpeed(playbackSpeedForCurrentEngine())
             standby.volume = 0f
             standby.setMediaItems(items, index, startPosition)
             // Before prepare(), so the DSP applies the upgraded track's gain
@@ -7960,7 +7991,8 @@ class PlaybackService : MediaLibraryService() {
                         // The native endpoints accept interleaved Float32 only.
                         PcmEncoding.PCM_FLOAT
                     } else if (AppSettings.qualityOptions.value &&
-                        AppSettings.referenceEngineMode.value == ReferenceEngineMode.HIBY
+                        (AppSettings.referenceEngineMode.value == ReferenceEngineMode.HIBY ||
+                            AppSettings.referenceEngineMode.value == ReferenceEngineMode.HYBRID)
                     ) {
                         // OtHiByTrackUtils is configured for PCM16 in this
                         // bridge; no float-as-integer format guessing.
@@ -8009,9 +8041,17 @@ class PlaybackService : MediaLibraryService() {
      * idle right now is the one the next transition will start a song on, so it
      * cannot be left on stale settings.
      */
+    /** PAWS tempo runs in its real TempoPluginService; never apply it twice through Media3. */
+    private fun playbackSpeedForCurrentEngine(): Float {
+        val nativeTempo = AppSettings.qualityOptions.value &&
+            (AppSettings.referenceEngineMode.value == ReferenceEngineMode.POWERAMP ||
+                AppSettings.referenceEngineMode.value == ReferenceEngineMode.HYBRID)
+        return if (nativeTempo) 1f else AppSettings.playbackSpeed.value
+    }
+
     private fun applySettings(player: ExoPlayer) {
         player.skipSilenceEnabled = AppSettings.skipSilence.value
-        player.setPlaybackSpeed(AppSettings.playbackSpeed.value)
+        player.setPlaybackSpeed(playbackSpeedForCurrentEngine())
         // Restore persisted shuffle and repeat states on startup. Assign both
         // values: Android can destroy and recreate the service while retaining
         // this process, so QueueShuffle's process-wide object may still hold
@@ -8296,6 +8336,10 @@ class PlaybackService : MediaLibraryService() {
         oldActive.removeListener(playbackListener)
         oldActive.removeAnalyticsListener(formatListener)
 
+        // New Media3 sinks have new owner tokens. Retire the old process-global
+        // endpoints before they configure, rather than reporting a false busy graph.
+        runCatching { ReferenceEngineLoader.pawsHost?.closePcm() }
+        runCatching { HibyNativeTrackWriter.close() }
         configure()
         activeFilter = transitionFilterA
         spareFilter = transitionFilterB
@@ -8430,6 +8474,14 @@ class PlaybackService : MediaLibraryService() {
         return AudioRouting.kindOf(device.type) ?: AudioRouting.Kind.PHONE
     }
 
+    /**
+     * Native endpoints and the userspace USB claim bind a device at open time;
+     * changing the physical route requires a new sink, not just a preference.
+     */
+    private fun outputChangeRequiresNewEndpoint(): Boolean =
+        AppSettings.outputDriver.value in NATIVE_PCM_DRIVERS ||
+            AppSettings.outputDriver.value == OutputDriver.USB_EXCLUSIVE
+
     private fun shouldEnableFloatOutput(): Boolean {
         if (AppSettings.outputDriver.value in NATIVE_PCM_DRIVERS) return true
         val activeDevice = resolveActiveOutputDevice()
@@ -8455,6 +8507,38 @@ class PlaybackService : MediaLibraryService() {
         spare?.let(body)
     }
 
+    private fun applyPawsCrossfadeGuard() {
+        val guard = AppSettings.qualityOptions.value &&
+            (AppSettings.referenceEngineMode.value == ReferenceEngineMode.POWERAMP ||
+                AppSettings.referenceEngineMode.value == ReferenceEngineMode.HIBY ||
+                AppSettings.referenceEngineMode.value == ReferenceEngineMode.HYBRID)
+        if (guard) {
+            if (AppSettings.crossfadeSeconds.value != 0 || crossfade?.isTransitioning() == true) {
+                crossfadeBeforePaws = AppSettings.crossfadeSeconds.value
+                AppSettings.crossfadeSeconds.value = 0
+                crossfade?.onSkipRequested()
+            } else if (crossfadeBeforePaws == null) {
+                crossfadeBeforePaws = 0
+            }
+            if (AppSettings.smartFadeEnabled.value) {
+                smartFadeBeforePaws = true
+                AppSettings.smartFadeEnabled.value = false
+                crossfade?.onSkipRequested()
+            } else if (smartFadeBeforePaws == null) {
+                smartFadeBeforePaws = false
+            }
+            return
+        }
+        crossfadeBeforePaws?.let { saved ->
+            crossfadeBeforePaws = null
+            if (AppSettings.crossfadeSeconds.value == 0) AppSettings.crossfadeSeconds.value = saved
+        }
+        smartFadeBeforePaws?.let { saved ->
+            smartFadeBeforePaws = null
+            AppSettings.smartFadeEnabled.value = saved
+        }
+    }
+
     private fun observeSettings() {
         var initialReferenceSettings = true
         scope.launch {
@@ -8468,6 +8552,7 @@ class PlaybackService : MediaLibraryService() {
                         ReferenceEngineLoader.bypass()
                     }
                 }
+                applyPawsCrossfadeGuard()
                 // Reference processors open their PCM graph at sink configure;
                 // a same-encoding switch still needs a fresh renderer pair. The
                 // initial emission only loads the host: restoreQueue still owns
@@ -8487,7 +8572,7 @@ class PlaybackService : MediaLibraryService() {
             ) { _, _, _ -> Unit }.collect {
                 withContext(Dispatchers.IO) {
                     runCatching { ReferenceEngineLoader.hibyHost?.applyOutputRules() }
-                        .onFailure { ReferenceEngineLoader.markHibyOutput(false, "INIT FAILED: ${it.message}") }
+                        .onFailure { ReferenceEngineLoader.markHibyOutput(NativeStreamState.FAILED, "INIT FAILED: ${it.message}") }
                 }
                 requestOutputReconfiguration()
             }
@@ -8531,10 +8616,68 @@ class PlaybackService : MediaLibraryService() {
                                 }.toTypedArray(),
                             )
                         }.onFailure {
-                            ReferenceEngineLoader.markHibyOutput(false, "INIT FAILED: ${it.message}")
+                            ReferenceEngineLoader.markHibyOutput(NativeStreamState.FAILED, "INIT FAILED: ${it.message}")
                         }
                     }
                 }
+        }
+        scope.launch {
+            combine(
+                AppSettings.powerampEqState,
+                ReferenceEngineLoader.status,
+            ) { eq, snapshot -> eq to snapshot.paws.state }
+                .distinctUntilChanged()
+                .collect { (eq, _) ->
+                    withContext(Dispatchers.IO) {
+                        runCatching {
+                            val host = ReferenceEngineLoader.pawsHost ?: return@runCatching
+                            host.setControls(
+                                PawsControlState(
+                                    bands = eq.bands.map { band ->
+                                        PawsEqBand(
+                                            frequencyHz = band.frequencyHz.roundToInt(),
+                                            gainDb = band.gainDb,
+                                            q = band.q,
+                                            enabled = eq.equEnabled && band.enabled,
+                                            parametric = eq.parametricMode,
+                                        )
+                                    },
+                                    preampLinear = 10f.pow(eq.preampDb / 20f).coerceIn(0f, 2f),
+                                    equEnabled = eq.equEnabled,
+                                    toneEnabled = eq.toneEnabled,
+                                    limiterEnabled = eq.limiterEnabled,
+                                    bassGain = eq.bassGain,
+                                    trebleGain = eq.trebleGain,
+                                    stereoWide = eq.stereoWidth,
+                                    balance = eq.balance,
+                                    monoEnabled = eq.monoEnabled,
+                                    tempo = eq.tempo,
+                                    reverbEnabled = eq.reverb.enabled,
+                                    reverbValues = floatArrayOf(
+                                        eq.reverb.damp,
+                                        eq.reverb.filter,
+                                        eq.reverb.fade,
+                                        eq.reverb.preDelay,
+                                        eq.reverb.preDelayMix,
+                                        eq.reverb.size,
+                                        eq.reverb.mix,
+                                    ),
+                                ),
+                            )
+                        }.onFailure {
+                            val detail = ReferenceEngineLoader.status.value.pawsOutput.detail
+                                ?.takeIf { ReferenceEngineLoader.status.value.pawsOutput.state == NativeStreamState.FAILED }
+                                ?: "INIT FAILED: PAWS controls: ${it.message}"
+                            ReferenceEngineLoader.markPawsOutput(NativeStreamState.FAILED, detail)
+                        }
+                    }
+                }
+        }
+        scope.launch {
+            AppSettings.crossfadeSeconds.collect { applyPawsCrossfadeGuard() }
+        }
+        scope.launch {
+            AppSettings.smartFadeEnabled.collect { applyPawsCrossfadeGuard() }
         }
         scope.launch {
             AppSettings.usbKeepAlive.collect { exclusiveUsb.setKeepAlive(it) }
@@ -8561,10 +8704,14 @@ class PlaybackService : MediaLibraryService() {
             }
         }
         scope.launch {
-            AppSettings.preferUsbDac.drop(1).collect { requestOutputReconfiguration() }
+            AppSettings.preferUsbDac.drop(1).collect {
+                requestOutputReconfiguration(forceRebuild = outputChangeRequiresNewEndpoint())
+            }
         }
         scope.launch {
-            AudioRouting.selectedId.drop(1).collect { requestOutputReconfiguration() }
+            AudioRouting.selectedId.drop(1).collect {
+                requestOutputReconfiguration(forceRebuild = outputChangeRequiresNewEndpoint())
+            }
         }
         scope.launch {
             AppSettings.outputPcmMode.drop(1).collect { requestOutputReconfiguration() }
@@ -8610,12 +8757,18 @@ class PlaybackService : MediaLibraryService() {
             // raw value over it would drop the incoming track back to its own
             // tempo halfway through a blend. The controller re-reads the setting
             // when it restores the rate, so the change still lands.
-            AppSettings.playbackSpeed.collect { speed ->
+            AppSettings.playbackSpeed.collect {
                 if (crossfade?.isTransitioning() == true) return@collect
+                val nativeTempo = AppSettings.qualityOptions.value &&
+                    (AppSettings.referenceEngineMode.value == ReferenceEngineMode.POWERAMP ||
+                        AppSettings.referenceEngineMode.value == ReferenceEngineMode.HYBRID)
+                val speed = if (nativeTempo) 1f else it
                 crossfade?.applyPlaybackSpeed(speed) ?: eachPlayer { it.setPlaybackSpeed(speed) }
-                if (AppSettings.outputDriver.value in NATIVE_PCM_DRIVERS) {
-                    // Native endpoints deliberately reject non-1x playback
-                    // rather than reporting a clock which the audio never follows.
+                if (!nativeTempo && AppSettings.outputDriver.value in NATIVE_PCM_DRIVERS) {
+                    // Native endpoints accept only 1.0x. Rebuild on both edges:
+                    // entering a non-1x state must release the native endpoint,
+                    // and returning to 1.0x must reopen it instead of leaving the
+                    // previous rejected negotiation in place.
                     requestOutputReconfiguration(forceRebuild = true)
                 }
             }
@@ -8771,18 +8924,32 @@ class PlaybackService : MediaLibraryService() {
      * audio thread is the one place that must not do that.
      */
     private fun applyEqualizer() {
+        val referenceOwnsBalance = AppSettings.qualityOptions.value &&
+            (AppSettings.referenceEngineMode.value == ReferenceEngineMode.POWERAMP ||
+                AppSettings.referenceEngineMode.value == ReferenceEngineMode.HYBRID)
+        if (referenceOwnsBalance) {
+            // PAWS already applies this exact balance in u21. Never apply it twice.
+            equalizerProcessorA.setTuning(false, manualCurve(EqualizerPreset.FLAT.bands), 0f)
+            equalizerProcessorB.setTuning(false, manualCurve(EqualizerPreset.FLAT.bands), 0f)
+            return
+        }
         val enabled = AppSettings.equalizerEnabled.value
-        val curve = when (AppSettings.equalizerMode.value) {
-            EqualizerMode.DYNAMIC -> toneCurve(
-                x = AppSettings.equalizerToneX.value,
-                y = AppSettings.equalizerToneY.value,
-                focused = AppSettings.equalizerFocused.value,
-            )
-            EqualizerMode.MANUAL -> manualCurve(AppSettings.equalizerBands.value)
+        val curve = if (enabled) {
+            when (AppSettings.equalizerMode.value) {
+                EqualizerMode.DYNAMIC -> toneCurve(
+                    x = AppSettings.equalizerToneX.value,
+                    y = AppSettings.equalizerToneY.value,
+                    focused = AppSettings.equalizerFocused.value,
+                )
+                EqualizerMode.MANUAL -> manualCurve(AppSettings.equalizerBands.value)
+            }
+        } else {
+            manualCurve(EqualizerPreset.FLAT.bands)
         }
         val balance = AppSettings.equalizerBalance.value
-        equalizerProcessorA.setTuning(enabled, curve, balance)
-        equalizerProcessorB.setTuning(enabled, curve, balance)
+        val processorEnabled = enabled || balance != 0f
+        equalizerProcessorA.setTuning(processorEnabled, curve, balance)
+        equalizerProcessorB.setTuning(processorEnabled, curve, balance)
     }
 
     /**

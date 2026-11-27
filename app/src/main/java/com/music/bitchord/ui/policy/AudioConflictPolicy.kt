@@ -27,8 +27,16 @@ data class AudioPolicySettings(
     val qualityDspActive: Boolean
         get() = qualityOptions &&
             referenceEngineMode != ReferenceEngineMode.BIT_PERFECT &&
-            !bitPerfect &&
-            outputDriver != OutputDriver.USB_EXCLUSIVE
+            !directPcmOwnsSamples
+
+    /**
+     * Output modes that make the app bypass DSP or hand the endpoint to a
+     * non-mixed path. They own the samples for as long as they are selected.
+     */
+    val directPcmOwnsSamples: Boolean
+        get() = bitPerfect ||
+            outputDriver == OutputDriver.USB_EXCLUSIVE ||
+            outputDriver == OutputDriver.USB_SYSTEM_BIT_PERFECT
 
     /** The sole userspace/native USB owner, or null when neither owns it. */
     val exclusiveUsbSink: ExclusiveUsbSink?
@@ -36,7 +44,8 @@ data class AudioPolicySettings(
             outputDriver == OutputDriver.USB_EXCLUSIVE || bitPerfect ->
                 ExclusiveUsbSink.AURIS_USBDEVFS
             qualityOptions &&
-                referenceEngineMode == ReferenceEngineMode.HIBY &&
+                (referenceEngineMode == ReferenceEngineMode.HIBY ||
+                    referenceEngineMode == ReferenceEngineMode.HYBRID) &&
                 outputDriver == OutputDriver.AUDIO_TRACK ->
                 ExclusiveUsbSink.HIBY_NATIVE
             else -> null
@@ -199,6 +208,8 @@ object AudioConflictPolicy {
     ): AudioConflictKind? {
         val after = change.applyTo(before)
         val enablesAurisBitPerfect = change is AudioPolicyChange.SetBitPerfect && change.enabled
+        val enablesDirectDriver = change is AudioPolicyChange.SetOutputDriver &&
+            change.driver in DIRECT_PCM_DRIVERS
         val enablesAurisUsb = change is AudioPolicyChange.SetOutputDriver &&
             change.driver == OutputDriver.USB_EXCLUSIVE
         val activatesDsp = after.qualityOptions &&
@@ -208,30 +219,32 @@ object AudioConflictPolicy {
                 is AudioPolicyChange.SetReferenceEngineMode -> true
                 else -> false
             }
-        val activatesHiby = activatesDsp && after.referenceEngineMode == ReferenceEngineMode.HIBY
+        val activatesHiby = activatesDsp &&
+            (after.referenceEngineMode == ReferenceEngineMode.HIBY ||
+                after.referenceEngineMode == ReferenceEngineMode.HYBRID)
 
         return when {
             // Enabling either direct path must first retire a genuinely active
             // reference DSP graph. The HiBy case is also a USB ownership change.
-            (enablesAurisBitPerfect || enablesAurisUsb) && before.qualityDspActive ->
+            (enablesAurisBitPerfect || enablesDirectDriver) && before.qualityDspActive ->
                 if (enablesAurisUsb && before.exclusiveUsbSink == ExclusiveUsbSink.HIBY_NATIVE) {
                     AudioConflictKind.COMPETING_EXCLUSIVE_USB_SINKS
                 } else {
                     AudioConflictKind.BIT_PERFECT_VS_QUALITY_DSP
                 }
 
-            // The reverse request is real too: enabling DSP while Bit-perfect
-            // owns the path cannot silently leave the new switch ineffectual.
-            activatesDsp && before.bitPerfect ->
-                AudioConflictKind.BIT_PERFECT_VS_QUALITY_DSP
-
             enablesAurisUsb && before.exclusiveUsbSink == ExclusiveUsbSink.HIBY_NATIVE ->
                 AudioConflictKind.COMPETING_EXCLUSIVE_USB_SINKS
 
-            // Selecting HiBy while Auris owns usbdevfs requires handing the
-            // endpoint back before native HiBy output can be enabled.
-            activatesHiby && before.exclusiveUsbSink == ExclusiveUsbSink.AURIS_USBDEVFS ->
+            // Selecting HiBy while userspace USB owns the endpoint is a USB
+            // ownership transfer, not merely a DSP enable.
+            activatesHiby && before.outputDriver == OutputDriver.USB_EXCLUSIVE ->
                 AudioConflictKind.COMPETING_EXCLUSIVE_USB_SINKS
+
+            // The reverse request is real too: enabling DSP while any other
+            // direct path owns the samples cannot leave the switch inert.
+            activatesDsp && before.directPcmOwnsSamples ->
+                AudioConflictKind.BIT_PERFECT_VS_QUALITY_DSP
 
             else -> null
         }
@@ -248,7 +261,12 @@ object AudioConflictPolicy {
                 is AudioPolicyChange.SetBitPerfect,
                 is AudioPolicyChange.SetOutputDriver,
                 -> requested.copy(qualityOptions = false)
-                else -> requested.copy(bitPerfect = false)
+                // Enabling DSP retires every direct owner, not just the one
+                // boolean: a selected USB direct sound is still direct.
+                else -> requested.copy(
+                    bitPerfect = false,
+                    outputDriver = OutputDriver.AUDIO_TRACK,
+                )
             }
             AudioConflictKind.COMPETING_EXCLUSIVE_USB_SINKS -> when (request) {
                 is AudioPolicyChange.SetBitPerfect,
@@ -278,8 +296,8 @@ object AudioConflictPolicy {
         if (before.bitPerfect && !after.bitPerfect) {
             operations += AudioPolicyOperation.SetBitPerfect(false)
         }
-        if (before.outputDriver == OutputDriver.USB_EXCLUSIVE &&
-            after.outputDriver != OutputDriver.USB_EXCLUSIVE
+        if (before.outputDriver in DIRECT_PCM_DRIVERS &&
+            after.outputDriver != before.outputDriver
         ) {
             operations += AudioPolicyOperation.SetOutputDriver(after.outputDriver)
         }
@@ -315,6 +333,16 @@ object AudioConflictPolicy {
             AudioConflictKind.BIT_PERFECT_VS_QUALITY_DSP -> {
                 val enablingDirectPath = request is AudioPolicyChange.SetBitPerfect ||
                     request is AudioPolicyChange.SetOutputDriver
+                val directOwner = when {
+                    before.bitPerfect &&
+                        before.outputDriver in DIRECT_PCM_DRIVERS -> "Bit-perfect and USB direct output"
+                    before.bitPerfect -> "Bit-perfect"
+                    before.outputDriver == OutputDriver.USB_SYSTEM_BIT_PERFECT ->
+                        "USB System Bit-Perfect"
+                    before.outputDriver == OutputDriver.USB_EXCLUSIVE ->
+                        "USB Exclusive"
+                    else -> "The direct output"
+                }
                 PendingAudioConflict(
                     kind = kind,
                     request = request,
@@ -323,10 +351,14 @@ object AudioConflictPolicy {
                         "$requestedLabel and active Quality Options DSP cannot process the same samples. " +
                             "Quality Options will turn off before $requestedLabel is enabled."
                     } else {
-                        "Bit-perfect and active Quality Options DSP cannot process the same samples. " +
-                            "Bit-perfect will turn off before $requestedLabel is applied."
+                        "$directOwner and active Quality Options DSP cannot process the same samples. " +
+                            "$directOwner will turn off before Quality Options is applied."
                     },
-                    confirmLabel = if (enablingDirectPath) "Turn off DSP & enable" else "Turn off Bit-perfect",
+                    confirmLabel = if (enablingDirectPath) {
+                        "Turn off DSP & enable"
+                    } else {
+                        "Turn off direct output"
+                    },
                 )
             }
             AudioConflictKind.COMPETING_EXCLUSIVE_USB_SINKS -> {
@@ -350,6 +382,11 @@ object AudioConflictPolicy {
         }
     }
 }
+
+private val DIRECT_PCM_DRIVERS = setOf(
+    OutputDriver.USB_EXCLUSIVE,
+    OutputDriver.USB_SYSTEM_BIT_PERFECT,
+)
 
 fun AudioPolicyChange.applyTo(settings: AudioPolicySettings): AudioPolicySettings = when (this) {
     is AudioPolicyChange.SetBitPerfect -> settings.copy(bitPerfect = enabled)

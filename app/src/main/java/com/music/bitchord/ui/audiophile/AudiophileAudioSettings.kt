@@ -83,7 +83,13 @@ fun AudiophileAudioSettingsScreen(
         AudiophileAudioPage.RESAMPLER -> "Resampler"
         AudiophileAudioPage.DIRECT_VOLUME_CONTROL -> "Direct Volume Control"
         AudiophileAudioPage.OUTPUTS -> "Audio Outputs"
-        AudiophileAudioPage.OUTPUT_ROUTE -> route?.id?.label ?: "Audio Output"
+        AudiophileAudioPage.OUTPUT_ROUTE -> when {
+            route == null -> "Audio Output"
+            route.id == AudioOutputRouteId.USB_EXCLUSIVE &&
+                settings.outputDriver == com.music.bitchord.playback.audio.drivers.OutputDriver.USB_SYSTEM_BIT_PERFECT ->
+                settings.outputDriver.label
+            else -> route.id.label
+        }
         AudiophileAudioPage.OUTPUT_PROFILE -> profile?.name ?: "Output Device"
         AudiophileAudioPage.BIT_PERFECT -> "Bit Perfect"
         AudiophileAudioPage.ADVANCED_TWEAKS -> "Advanced Tweaks"
@@ -125,13 +131,14 @@ fun AudiophileAudioSettingsScreen(
                     callbacks = callbacks.directVolumeControl,
                 )
                 AudiophileAudioPage.OUTPUTS -> AudioOutputsSettingsPage(
-                    routes = settings.outputs,
+                    settings = settings,
                     navigation = callbacks.navigation,
                     callbacks = callbacks.outputs,
                 )
                 AudiophileAudioPage.OUTPUT_ROUTE -> if (route != null) {
                     AudioOutputRouteSettingsPage(
                         route = route,
+                        selectedDriver = settings.outputDriver,
                         namedDeviceName = uiState.namedDeviceName,
                         navigation = callbacks.navigation,
                         callbacks = callbacks.outputs,

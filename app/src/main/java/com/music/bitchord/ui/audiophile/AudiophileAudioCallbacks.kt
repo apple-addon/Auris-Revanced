@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.audiophile
 
+import com.music.bitchord.playback.audio.drivers.OutputDriver
+
 /** Explicit control callbacks, grouped to keep constructors and Compose capture sets small. */
 data class AudiophileAudioCallbacks(
     val navigation: AudiophileNavigationCallbacks,
@@ -118,7 +120,10 @@ data class BitPerfectSettingsCallbacks(
 )
 
 data class OutputSettingsCallbacks(
-    val onRouteEnabledChange: (AudioOutputRouteId, Boolean) -> Unit,
+    val onRouteSelected: (AudioOutputRouteId) -> Unit,
+    /** Selects a distinct backend inside a route sharing one physical output family. */
+    val onOutputDriverSelected: (OutputDriver) -> Unit,
+    val onChromecastEnabledChange: (Boolean) -> Unit,
     val onProfileEnabledChange: (AudioOutputRouteId, String, Boolean) -> Unit,
     val onSampleRateHzChange: (AudioOutputRouteId, String, Int) -> Unit,
     val onSampleFormatChange: (AudioOutputRouteId, String, OutputSampleFormat) -> Unit,

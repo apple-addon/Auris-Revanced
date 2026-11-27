@@ -17,6 +17,7 @@ from elftools.elf.elffile import ELFFile
 
 SYSTEM_LIBRARIES = {
     "libandroid.so",
+    "libaaudio.so",
     "libc.so",
     "libdl.so",
     "libEGL.so",

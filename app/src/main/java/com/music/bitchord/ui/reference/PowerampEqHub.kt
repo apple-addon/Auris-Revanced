@@ -19,19 +19,56 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 
+private val PowerampEditorColors = darkColorScheme(
+    primary = Color(0xFF9DFF6A),
+    onPrimary = Color(0xFF10220A),
+    primaryContainer = Color(0xFF27461B),
+    onPrimaryContainer = Color(0xFFD9FFC8),
+    secondary = Color(0xFF9DFF6A),
+    onSecondary = Color(0xFF10220A),
+    secondaryContainer = Color(0xFF27461B),
+    onSecondaryContainer = Color(0xFFD9FFC8),
+    tertiary = Color(0xFF9DFF6A),
+    onTertiary = Color(0xFF10220A),
+    tertiaryContainer = Color(0xFF27461B),
+    onTertiaryContainer = Color(0xFFD9FFC8),
+    background = Color(0xFF030504),
+    onBackground = Color(0xFFF0F5ED),
+    surface = Color(0xFF030504),
+    onSurface = Color(0xFFF0F5ED),
+    surfaceVariant = Color(0xFF1B211B),
+    onSurfaceVariant = Color(0xFFB5C0B1),
+    outline = Color(0xFF667261),
+).copy(
+    surfaceContainer = Color(0xFF0B100C),
+    surfaceContainerLow = Color(0xFF101610),
+    surfaceContainerHigh = Color(0xFF182018),
+)
+
+@Composable
+internal fun PowerampFullScreenTheme(content: @Composable () -> Unit) {
+    MaterialTheme(
+        colorScheme = PowerampEditorColors,
+        typography = MaterialTheme.typography,
+        shapes = MaterialTheme.shapes,
+        content = content,
+    )
+}
+
 /**
- * Poweramp-style three-page content. Deliberately has no vertical scroller: mount it directly
- * inside the existing Audio Output sheet's scrollable Column and keep [state] in that caller.
+ * Poweramp-style three-page content. Deliberately has no title or vertical scroller: the caller's
+ * full-window editor owns both, while [state] and transient UI state remain hoisted in that caller.
  */
 @Composable
 fun PowerampEqHub(
@@ -51,11 +88,6 @@ fun PowerampEqHub(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text(
-            text = "Poweramp EQ Hub",
-            style = MaterialTheme.typography.titleLarge,
-            fontWeight = FontWeight.SemiBold,
-        )
         ReferenceChoiceChips(
             options = PowerampEqPage.entries.map { it.label },
             selectedIndex = PowerampEqPage.entries.indexOf(ui.page),

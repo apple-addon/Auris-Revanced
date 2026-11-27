@@ -20,12 +20,14 @@ jlong to_handle(auris::NativeOutput *output) {
 }
 
 auris::OutputSpec make_spec(
-        jint sample_rate, jint channels, jint session_id, jint requested_buffer_frames) {
+        jint sample_rate, jint channels, jint session_id, jint requested_buffer_frames,
+        jint audio_device_id = 0) {
     auris::OutputSpec spec;
     spec.sample_rate = sample_rate;
     spec.channels = channels;
     spec.audio_session_id = session_id;
     spec.requested_buffer_frames = requested_buffer_frames;
+    spec.audio_device_id = audio_device_id;
     return spec;
 }
 
@@ -58,8 +60,9 @@ extern "C" {
 JNIEXPORT jlong JNICALL
 Java_com_music_bitchord_playback_output_NativeOutputBridge_nativeCreateAAudio(
         JNIEnv * /*env*/, jobject /*object*/, jint sample_rate, jint channels, jint session_id,
-        jint requested_buffer_frames, jboolean request_exclusive) {
-    const auto spec = make_spec(sample_rate, channels, session_id, requested_buffer_frames);
+        jint requested_buffer_frames, jint audio_device_id, jboolean request_exclusive) {
+    const auto spec = make_spec(
+            sample_rate, channels, session_id, requested_buffer_frames, audio_device_id);
     return create_output([&](std::string &error) {
         return auris::AAudioOutput::open(spec, request_exclusive == JNI_TRUE, error);
     });

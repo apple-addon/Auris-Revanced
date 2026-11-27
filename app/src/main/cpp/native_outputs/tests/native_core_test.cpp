@@ -97,13 +97,18 @@ void test_accounting() {
     check(accounting.output_frames() == 480 && accounting.position_frames() == 480,
             "full buffer clock");
     check(accounting.underruns() == 0 && accounting.missing_frames() == 0, "no false underrun");
-    accounting.record_enqueued(480, 120);
+    accounting.record_enqueued(480, 120, /*count_underrun=*/false);
     check(accounting.output_frames() == 960 && accounting.position_frames() == 960,
+            "priming still advances hardware queue clock");
+    check(accounting.underruns() == 0 && accounting.missing_frames() == 0,
+            "startup priming is not a starvation underrun");
+    accounting.record_enqueued(480, 120);
+    check(accounting.output_frames() == 1440 && accounting.position_frames() == 1440,
             "short buffer still advances hardware queue clock");
     check(accounting.underruns() == 1 && accounting.missing_frames() == 360,
-            "short buffer accounting");
+            "short buffer accounting after playback starts");
     accounting.reset_position();
-    check(accounting.position_frames() == 0 && accounting.output_frames() == 960,
+    check(accounting.position_frames() == 0 && accounting.output_frames() == 1440,
             "flush resets position only");
     check(accounting.underruns() == 1, "flush preserves lifetime xruns");
     check(auris::frames_to_us(48000, 48000) == 1000000, "frame to time conversion");

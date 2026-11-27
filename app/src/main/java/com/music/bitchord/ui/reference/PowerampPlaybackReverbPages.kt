@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Text
@@ -22,25 +23,27 @@ internal fun PowerampPlaybackPage(
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         ReferenceSection(title = "Stereo") {
-            ReferenceSliderRow(
-                label = "Balance",
-                value = state.balance,
-                valueRange = -1f..1f,
-                onValueChange = { onStateChange(PowerampEqReducer.setBalance(state, it)) },
-                valueText = balanceLabel(state.balance),
-                steps = 39,
-                nudge = 0.05f,
-            )
-            ReferenceSliderRow(
-                label = "Stereo expansion",
-                value = state.stereoWidth,
-                valueRange = -1f..1f,
-                onValueChange = { onStateChange(PowerampEqReducer.setStereoWidth(state, it)) },
-                valueText = signedPercent(state.stereoWidth),
-                steps = 39,
-                nudge = 0.05f,
-                supportingText = "Negative narrows the image; positive widens it.",
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+            ) {
+                ReferenceDial(
+                    label = "Balance",
+                    value = state.balance,
+                    valueRange = -1f..1f,
+                    onValueChange = { onStateChange(PowerampEqReducer.setBalance(state, it)) },
+                    modifier = Modifier.weight(1f),
+                    valueText = balanceLabel(state.balance),
+                )
+                ReferenceDial(
+                    label = "Stereo expansion",
+                    value = state.stereoWidth,
+                    valueRange = 0f..1f,
+                    onValueChange = { onStateChange(PowerampEqReducer.setStereoWidth(state, it)) },
+                    modifier = Modifier.weight(1f),
+                    valueText = formatPercent(state.stereoWidth),
+                )
+            }
             ReferenceToggleRow(
                 label = "Mono",
                 subtitle = "Combine left and right channels.",
@@ -52,23 +55,23 @@ internal fun PowerampPlaybackPage(
             ReferenceSliderRow(
                 label = "Tempo",
                 value = state.tempo,
-                valueRange = 0.5f..2f,
+                valueRange = 0.5f..3f,
                 onValueChange = { onStateChange(PowerampEqReducer.setTempo(state, it)) },
                 valueText = String.format(Locale.US, "%.2f×", state.tempo),
-                steps = 29,
+                steps = 49,
                 nudge = 0.05f,
             )
             TextButton(onClick = { onStateChange(PowerampEqReducer.setTempo(state, 1f)) }) {
                 Text("Reset tempo to 1.00×")
             }
-            ReferenceSliderRow(
+            ReferenceDial(
                 label = "Volume",
                 value = state.volume,
                 valueRange = 0f..1f,
                 onValueChange = { onStateChange(PowerampEqReducer.setVolume(state, it)) },
+                modifier = Modifier.fillMaxWidth(),
                 valueText = formatPercent(state.volume),
-                steps = 99,
-                nudge = 0.01f,
+                diameter = 168.dp,
             )
         }
     }
@@ -94,17 +97,16 @@ internal fun PowerampReverbPage(
             PowerampReverbDials(state, onStateChange)
         }
         ReferenceSection(title = "Output mix") {
-            ReferenceSliderRow(
+            ReferenceDial(
                 label = "Mix",
                 value = reverb.mix,
                 valueRange = 0f..1f,
                 onValueChange = { mix ->
                     onStateChange(PowerampEqReducer.updateReverb(state) { it.copy(mix = mix) })
                 },
+                modifier = Modifier.fillMaxWidth(),
                 valueText = formatReverbValue(reverb.mix),
                 enabled = reverb.enabled,
-                steps = 99,
-                nudge = 0.01f,
             )
             PowerampReverbActions(state, onStateChange)
         }
@@ -199,10 +201,4 @@ private fun balanceLabel(value: Float): String = when {
     abs(value) < 0.025f -> "Center"
     value < 0f -> "L ${(abs(value) * 100f).roundToInt()}%"
     else -> "R ${(value * 100f).roundToInt()}%"
-}
-
-private fun signedPercent(value: Float): String = when {
-    abs(value) < 0.025f -> "Normal"
-    value < 0f -> "Narrow ${(abs(value) * 100f).roundToInt()}%"
-    else -> "Wide ${(value * 100f).roundToInt()}%"
 }

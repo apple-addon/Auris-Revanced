@@ -24,14 +24,14 @@ private fun CrossfadeChoicesSection(
     callbacks: CrossfadeFadeGaplessCallbacks,
 ) {
     AudiophileSection(title = "Crossfade") {
-        AudiophileChoiceChips(
+        AudiophileSelectionGroup(
             label = "Auto-advance fading",
             options = AutoAdvanceFading.entries,
             selected = settings.autoAdvanceFading,
             onSelect = callbacks.onAutoAdvanceFadingChange,
             optionLabel = AutoAdvanceFading::label,
         )
-        AudiophileChoiceChips(
+        AudiophileSelectionGroup(
             label = "Manual track-change fading",
             options = ManualTrackChangeFading.entries,
             selected = settings.manualTrackChangeFading,
@@ -145,14 +145,14 @@ fun ReplayGainSettingsPage(
 @Composable
 private fun ReplayGainModeSection(settings: ReplayGainState, callbacks: ReplayGainCallbacks) {
     AudiophileSection(title = "Replay Gain") {
-        AudiophileChoiceChips(
+        AudiophileSelectionGroup(
             label = "Replay Gain",
             options = ReplayGainMode.entries,
             selected = settings.mode,
             onSelect = callbacks.onModeChange,
             optionLabel = ReplayGainMode::label,
         )
-        AudiophileChoiceChips(
+        AudiophileSelectionGroup(
             label = "Source",
             options = ReplayGainSource.entries,
             selected = settings.source,
@@ -224,7 +224,7 @@ private fun TemporaryFocusSection(settings: AudioFocusState, callbacks: AudioFoc
             onCheckedChange = callbacks.onDuckVolumeEnabledChange,
             enabled = settings.shortAudioFocusChangeCalls,
         )
-        AudiophileChoiceChips(
+        AudiophileSelectionGroup(
             label = "Short focus duck policy",
             options = AudioFocusDuckPolicy.entries,
             selected = settings.shortFocusDuckPolicy,
@@ -232,7 +232,7 @@ private fun TemporaryFocusSection(settings: AudioFocusState, callbacks: AudioFoc
             optionLabel = AudioFocusDuckPolicy::label,
             enabled = settings.shortAudioFocusChangeCalls && settings.duckVolumeEnabled,
         )
-        AudiophileChoiceChips(
+        AudiophileSelectionGroup(
             label = "Notification duck policy",
             options = AudioFocusDuckPolicy.entries,
             selected = settings.notificationDuckPolicy,

@@ -9,5 +9,8 @@ add_library(decent_usb_audio SHARED
     usb-audio-output.cpp
 )
 
+# Android 15+/Play 16 KB ELF LOAD alignment; also valid on 4 KB systems.
+target_link_options(decent_usb_audio PRIVATE "-Wl,-z,max-page-size=16384")
+
 find_library(log-lib log)
 target_link_libraries(decent_usb_audio ${log-lib})

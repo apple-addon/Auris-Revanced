@@ -13,6 +13,8 @@ namespace {
 
 using SetSessionId = void (*)(AAudioStreamBuilder *, aaudio_session_id_t);
 using GetSessionId = aaudio_session_id_t (*)(AAudioStream *);
+using SetUsage = void (*)(AAudioStreamBuilder *, aaudio_usage_t);
+using SetContentType = void (*)(AAudioStreamBuilder *, aaudio_content_type_t);
 
 SetSessionId set_session_id() {
     return reinterpret_cast<SetSessionId>(dlsym(RTLD_DEFAULT, "AAudioStreamBuilder_setSessionId"));
@@ -20,6 +22,17 @@ SetSessionId set_session_id() {
 
 GetSessionId get_session_id() {
     return reinterpret_cast<GetSessionId>(dlsym(RTLD_DEFAULT, "AAudioStream_getSessionId"));
+}
+
+// Usage/content classification was added in API 28. dlsym keeps the minSdk 26
+// build valid; on API 26/27 the platform's default classification applies.
+void set_usage_if_available(AAudioStreamBuilder *builder) {
+    auto usage = reinterpret_cast<SetUsage>(
+            dlsym(RTLD_DEFAULT, "AAudioStreamBuilder_setUsage"));
+    if (usage) usage(builder, AAUDIO_USAGE_MEDIA);
+    auto content = reinterpret_cast<SetContentType>(
+            dlsym(RTLD_DEFAULT, "AAudioStreamBuilder_setContentType"));
+    if (content) content(builder, AAUDIO_CONTENT_TYPE_MUSIC);
 }
 
 std::string result_error(const char *operation, aaudio_result_t result) {
@@ -80,12 +93,16 @@ bool AAudioOutput::open_one(aaudio_sharing_mode_t sharing, std::string &error) {
     }
 
     AAudioStreamBuilder_setDirection(builder, AAUDIO_DIRECTION_OUTPUT);
+    set_usage_if_available(builder);
     AAudioStreamBuilder_setFormat(builder, AAUDIO_FORMAT_PCM_FLOAT);
     AAudioStreamBuilder_setSampleRate(builder, spec_.sample_rate);
     AAudioStreamBuilder_setChannelCount(builder, spec_.channels);
     AAudioStreamBuilder_setPerformanceMode(builder, AAUDIO_PERFORMANCE_MODE_LOW_LATENCY);
     AAudioStreamBuilder_setSharingMode(builder, sharing);
     AAudioStreamBuilder_setErrorCallback(builder, error_callback, this);
+    if (spec_.audio_device_id > 0) {
+        AAudioStreamBuilder_setDeviceId(builder, spec_.audio_device_id);
+    }
     if (spec_.requested_buffer_frames > 0) {
         AAudioStreamBuilder_setBufferCapacityInFrames(builder, spec_.requested_buffer_frames);
     }
@@ -106,11 +123,15 @@ bool AAudioOutput::open_one(aaudio_sharing_mode_t sharing, std::string &error) {
     const int actual_rate = AAudioStream_getSampleRate(stream_);
     const int actual_channels = AAudioStream_getChannelCount(stream_);
     const auto actual_format = AAudioStream_getFormat(stream_);
+    const int actual_device = AAudioStream_getDeviceId(stream_);
     if (actual_rate != spec_.sample_rate || actual_channels != spec_.channels ||
-            actual_format != AAUDIO_FORMAT_PCM_FLOAT) {
+            actual_format != AAUDIO_FORMAT_PCM_FLOAT ||
+            (spec_.audio_device_id > 0 && actual_device != spec_.audio_device_id)) {
         error = "AAudio negotiated an incompatible stream: rate=" + std::to_string(actual_rate) +
                 ", channels=" + std::to_string(actual_channels) +
-                ", format=" + std::to_string(actual_format);
+                ", format=" + std::to_string(actual_format) +
+                ", device=" + std::to_string(actual_device) +
+                ", requestedDevice=" + std::to_string(spec_.audio_device_id);
         close_locked();
         return false;
     }

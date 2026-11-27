@@ -28,7 +28,7 @@ private fun ReferenceModeSection(settings: AdvancedTweaksState, callbacks: Advan
             checked = settings.referenceModeEnabled,
             onCheckedChange = callbacks.onReferenceModeEnabledChange,
         )
-        AudiophileChoiceChips(
+        AudiophileSelectionGroup(
             label = "Reference engine",
             options = ReferenceMode.entries,
             selected = settings.referenceMode,
@@ -72,7 +72,7 @@ private fun SystemWorkaroundsSection(
     callbacks: AdvancedTweaksCallbacks,
 ) {
     AudiophileSection(title = "System workarounds") {
-        AudiophileChoiceChips(
+        AudiophileSelectionGroup(
             label = "Volume Levels",
             options = listOf(0, 16, 30, 50, 100, 150, 200, 256),
             selected = settings.volumeLevels,
@@ -93,7 +93,7 @@ private fun SystemWorkaroundsSection(
             checked = settings.musicFxEnabled,
             onCheckedChange = callbacks.onMusicFxEnabledChange,
         )
-        AudiophileChoiceChips(
+        AudiophileSelectionGroup(
             label = "Audio thread priority",
             options = (-2..3).toList(),
             selected = settings.audioThreadPriority,

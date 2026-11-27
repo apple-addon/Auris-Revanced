@@ -108,10 +108,16 @@ can pull processed interleaved PCM through `native_get_samples`; accepted PCM
 formats are S32, Float32, and packed 24-bit. DSD has to use the PCM tap or a
 native output path, not be mislabeled as raw DSD through that tap.
 
-There is no public arbitrary-PCM `transform(ByteBuffer)` JNI export. PAWS
-input opens a URI/FD and the live `Pipeline2` owns decoding/DSP/output. Any
-integration must report this distinction instead of pretending a clean-room
-processor is PAWS.
+There is no public arbitrary-PCM `transform(ByteBuffer)` JNI export. The
+integration therefore writes Float32 WAV PCM into a URI/FD pipe owned by the
+real live `Pipeline2`, then pulls real processed PCM from `output.cc` through
+`native_get_samples`; it does not substitute a clean-room processor. Library
+initialization and graph-open states are only `READY`. `ACTIVE` requires a
+positive, whole-frame PCM read in the current graph generation, while open,
+write, read, alignment, and stall failures remain exact and fail closed. The
+input ring and output array are reset on every generation so stale PCM cannot
+activate a new stream. Native registration and PCM output still require
+on-device logcat validation.
 
 The plugin interface package passed by `JNI_OnLoad` is exactly
 `com.auris.audioplayer`; the host DEX retains that identity. No certificate or

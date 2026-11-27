@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.audiophile
 
+import com.music.bitchord.playback.audio.drivers.OutputDriver
+
 /**
  * Pure, atomic updates for settings. Runtime status, device identity and unrelated sections are
  * preserved. In particular, Perfect Bit Perfect does not destructively switch off DSP settings;
@@ -55,15 +57,54 @@ object AudiophileAudioReducer {
         update: (AdvancedTweaksState) -> AdvancedTweaksState,
     ): AudiophileAudioState = state.copy(advancedTweaks = update(state.advancedTweaks).normalized())
 
+    /**
+     * Selects one local driver. Cast is independent and therefore is not a selectable driver.
+     *
+     * Selecting the already-selected route is a no-op, not a reset to that route's default
+     * backend. That matters for the USB family, where USB Exclusive and USB System Bit-Perfect
+     * share one route: tapping the checked row must preserve the chosen backend.
+     */
+    fun selectOutputDriver(
+        state: AudiophileAudioState,
+        driver: OutputDriver,
+    ): AudiophileAudioState {
+        val routeId = AudiophileOutputRouting.routeFor(driver)
+        val route = state.outputs.firstOrNull { it.id == routeId } ?: return state
+        if (!route.available) return state
+        if (state.outputDriver == driver && route.enabled) return state
+        return AudiophileOutputRouting.reconcile(state, driver)
+    }
+
+    fun selectOutputRoute(
+        state: AudiophileAudioState,
+        routeId: AudioOutputRouteId,
+    ): AudiophileAudioState {
+        if (routeId == AudiophileOutputRouting.routeFor(state.outputDriver)) return state
+        val driver = AudiophileOutputRouting.driverFor(routeId) ?: return state
+        return selectOutputDriver(state, driver)
+    }
+
     fun updateOutputRoute(
         state: AudiophileAudioState,
         routeId: AudioOutputRouteId,
         update: (AudioOutputRouteState) -> AudioOutputRouteState,
     ): AudiophileAudioState {
         if (state.outputs.none { it.id == routeId }) return state
-        return state.copy(
+        val updated = state.copy(
             outputs = state.outputs.map { route ->
                 if (route.id == routeId) update(route) else route
+            },
+        )
+        if (routeId == AudioOutputRouteId.CHROMECAST) return updated
+        return updated.copy(
+            outputs = updated.outputs.map { route ->
+                if (route.id == AudioOutputRouteId.CHROMECAST) {
+                    route
+                } else {
+                    route.copy(
+                        enabled = route.id == AudiophileOutputRouting.routeFor(updated.outputDriver),
+                    )
+                }
             },
         )
     }
@@ -147,15 +188,35 @@ object AudiophileAudioReducer {
         )
     }
 
-    fun resetOutputs(state: AudiophileAudioState): AudiophileAudioState = state.copy(
-        outputs = state.outputs.map { route -> route.resetDefaults() },
-    )
+    fun resetOutputs(state: AudiophileAudioState): AudiophileAudioState {
+        val reset = state.copy(
+            outputDriver = OutputDriver.AUDIO_TRACK,
+            outputs = state.outputs.map { route -> route.resetDefaults() },
+        )
+        return AudiophileOutputRouting.reconcile(reset)
+    }
 
     fun resetOutputRoute(
         state: AudiophileAudioState,
         routeId: AudioOutputRouteId,
-    ): AudiophileAudioState = updateOutputRouteWithoutNormalizingOthers(state, routeId) {
-        it.resetDefaults()
+    ): AudiophileAudioState {
+        if (state.outputs.none { it.id == routeId }) return state
+        val reset = updateOutputRouteWithoutNormalizingOthers(state, routeId) {
+            it.resetDefaults()
+        }
+        // Resetting one route's configuration must not select its factory driver or disturb
+        // runtime status. Only restore-all resets the canonical selection.
+        return reset.copy(
+            outputs = reset.outputs.map { route ->
+                if (route.id == AudioOutputRouteId.CHROMECAST) {
+                    route
+                } else {
+                    route.copy(
+                        enabled = route.id == AudiophileOutputRouting.routeFor(reset.outputDriver),
+                    )
+                }
+            },
+        )
     }
 
     fun resetOutputProfile(

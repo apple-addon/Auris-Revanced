@@ -2,14 +2,16 @@ package com.music.bitchord.playback.reference
 
 import com.music.bitchord.data.settings.ReferenceEngineMode
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ReferenceEnginePolicyTest {
     @Test
     fun `quality options off never claims native DSP`() {
         val snapshot = ReferenceEngineSnapshot(
-            hiby = NativeEngineStatus(NativeLoadState.LOADED_ACTIVE, "loaded"),
-            hibyOutputActive = true,
+            hiby = loadedHiby(),
+            hibyOutput = activeStream(),
         )
         assertEquals(
             "Quality Options OFF",
@@ -18,15 +20,26 @@ class ReferenceEnginePolicyTest {
     }
 
     @Test
-    fun `HiBy active requires both loaded engine and live output`() {
-        val ready = ReferenceEngineSnapshot(
-            hiby = NativeEngineStatus(NativeLoadState.LOADED_ACTIVE, "loaded"),
-        )
+    fun `HiBy active requires both loaded engine and positive PCM evidence`() {
+        val ready = ReferenceEngineSnapshot(hiby = loadedHiby())
         assertEquals("HIBY NATIVE READY", referenceTelemetrySummary(true, ReferenceEngineMode.HIBY, ready))
         assertEquals(
-            "HIBY NATIVE ACTIVE",
-            referenceTelemetrySummary(true, ReferenceEngineMode.HIBY, ready.copy(hibyOutputActive = true)),
+            "HIBY OUTPUT READY / WAITING FOR PCM",
+            referenceTelemetrySummary(
+                true,
+                ReferenceEngineMode.HIBY,
+                ready.copy(hibyOutput = NativeStreamStatus(NativeStreamState.OPEN)),
+            ),
         )
+        assertEquals(
+            "HIBY NATIVE ACTIVE",
+            referenceTelemetrySummary(true, ReferenceEngineMode.HIBY, ready.copy(hibyOutput = activeStream())),
+        )
+        val zeroFrames = ready.copy(
+            hibyOutput = NativeStreamStatus(NativeStreamState.ACTIVE, producedFrames = 0),
+        )
+        assertFalse(zeroFrames.hibyOutputActive)
+        assertEquals("HIBY NATIVE READY", referenceTelemetrySummary(true, ReferenceEngineMode.HIBY, zeroFrames))
     }
 
     @Test
@@ -41,27 +54,57 @@ class ReferenceEnginePolicyTest {
     }
 
     @Test
-    fun `PAWS active requires a live native output`() {
-        val snapshot = ReferenceEngineSnapshot(
-            paws = NativeEngineStatus(NativeLoadState.LOADED_ACTIVE, "loaded"),
-        )
+    fun `PAWS open primes silently and first PCM frame activates`() {
+        val snapshot = ReferenceEngineSnapshot(paws = loadedPaws())
         assertEquals("PAWS NATIVE READY", referenceTelemetrySummary(true, ReferenceEngineMode.POWERAMP, snapshot))
         assertEquals(
+            "PAWS GRAPH READY / WAITING FOR PCM",
+            referenceTelemetrySummary(
+                true,
+                ReferenceEngineMode.POWERAMP,
+                snapshot.copy(pawsOutput = NativeStreamStatus(NativeStreamState.OPEN)),
+            ),
+        )
+        assertEquals(
             "PAWS NATIVE ACTIVE",
-            referenceTelemetrySummary(true, ReferenceEngineMode.POWERAMP, snapshot.copy(pawsOutputActive = true)),
+            referenceTelemetrySummary(true, ReferenceEngineMode.POWERAMP, snapshot.copy(pawsOutput = activeStream())),
         )
     }
 
     @Test
-    fun `hybrid never fakes a native chain without the PAWS transform`() {
+    fun `PCM failure outranks stale active evidence`() {
         val snapshot = ReferenceEngineSnapshot(
-            paws = NativeEngineStatus(NativeLoadState.LOADED_ACTIVE, "loaded"),
-            hiby = NativeEngineStatus(NativeLoadState.LOADED_ACTIVE, "loaded"),
-            hibyOutputActive = true,
+            paws = loadedPaws(),
+            pawsOutput = NativeStreamStatus(NativeStreamState.FAILED, "output.cc stalled", producedFrames = 48),
         )
-        val summary = referenceTelemetrySummary(true, ReferenceEngineMode.HYBRID, snapshot)
-        assert(summary.startsWith("INIT FAILED: Hybrid"))
-        assert(!summary.contains("HYBRID NATIVE ACTIVE"))
+        assertEquals(
+            "PCM FAILED: output.cc stalled",
+            referenceTelemetrySummary(true, ReferenceEngineMode.POWERAMP, snapshot),
+        )
+    }
+
+    @Test
+    fun `hybrid active requires positive evidence from both native stages`() {
+        val loaded = ReferenceEngineSnapshot(paws = loadedPaws(), hiby = loadedHiby())
+        assertEquals("HYBRID NATIVE READY", referenceTelemetrySummary(true, ReferenceEngineMode.HYBRID, loaded))
+        assertEquals(
+            "HYBRID NATIVE READY",
+            referenceTelemetrySummary(true, ReferenceEngineMode.HYBRID, loaded.copy(pawsOutput = activeStream())),
+        )
+        assertEquals(
+            "HYBRID NATIVE READY",
+            referenceTelemetrySummary(true, ReferenceEngineMode.HYBRID, loaded.copy(hibyOutput = activeStream())),
+        )
+        val active = loaded.copy(pawsOutput = activeStream(), hibyOutput = activeStream())
+        assertTrue(active.pawsOutputActive && active.hibyOutputActive)
+        assertEquals("HYBRID NATIVE ACTIVE", referenceTelemetrySummary(true, ReferenceEngineMode.HYBRID, active))
+
+        val failed = active.copy(
+            hibyOutput = NativeStreamStatus(NativeStreamState.FAILED, "write=-1", producedFrames = 48),
+        )
+        val summary = referenceTelemetrySummary(true, ReferenceEngineMode.HYBRID, failed)
+        assertEquals("PCM FAILED: write=-1", summary)
+        assertFalse(summary.contains("HYBRID NATIVE ACTIVE"))
     }
 
     @Test
@@ -76,12 +119,16 @@ class ReferenceEnginePolicyTest {
     fun `MSEB keys preserve native HiBy order`() {
         assertEquals(
             listOf(
-                "master_temp", "bass0", "bass1", "thickness", "vocal", "female",
-                "male_vocal", "female_vocal", "instruments", "air",
+                "mseb_master_temp", "mseb_bass0", "mseb_bass1", "mseb_thickness", "mseb_vocal", "mseb_female",
+                "mseb_male_vocal", "mseb_female_vocal", "mseb_instruments", "mseb_air",
             ),
             HibyHostRuntime.MSEB_KEYS,
         )
     }
+
+    private fun loadedPaws() = NativeEngineStatus(NativeLoadState.LOADED_ACTIVE, "loaded")
+    private fun loadedHiby() = NativeEngineStatus(NativeLoadState.LOADED_ACTIVE, "loaded")
+    private fun activeStream() = NativeStreamStatus(NativeStreamState.ACTIVE, producedFrames = 48)
 }
 
 class HibyPcmContractTest {

@@ -1,5 +1,7 @@
 package com.music.bitchord.ui.audiophile
 
+import com.music.bitchord.playback.audio.drivers.OutputDriver
+
 /** Immutable snapshot for the complete Audio settings hierarchy. */
 data class AudiophileAudioState(
     val qualityOptionsEnabled: Boolean = false,
@@ -12,6 +14,8 @@ data class AudiophileAudioState(
     val outputs: List<AudioOutputRouteState> = AudiophileAudioDefaults.outputRoutes,
     val bitPerfect: BitPerfectSettingsState = BitPerfectSettingsState(),
     val advancedTweaks: AdvancedTweaksState = AdvancedTweaksState(),
+    /** Canonical local output selection; route enabled flags are derived from this scalar. */
+    val outputDriver: OutputDriver = OutputDriver.AUDIO_TRACK,
 )
 
 data class AudiophileAudioUiState(
@@ -262,7 +266,8 @@ enum class AudioOutputRouteId(val label: String, val description: String) {
 
 data class AudioOutputRouteState(
     val id: AudioOutputRouteId = AudioOutputRouteId.OPEN_SL_ES,
-    val enabled: Boolean = id == AudioOutputRouteId.OPEN_SL_ES,
+    /** Derived local-driver selection. Chromecast alone retains an independent Cast flag. */
+    val enabled: Boolean = id == AudioOutputRouteId.AUDIO_TRACK,
     val available: Boolean = true,
     val status: OutputConnectionStatus = OutputConnectionStatus.UNKNOWN,
     val statusDetail: String = "",
@@ -368,8 +373,8 @@ object AudiophileAudioDefaults {
         }.map { kind -> defaultProfile(id, kind) }
         return AudioOutputRouteState(
             id = id,
-            enabled = id == AudioOutputRouteId.OPEN_SL_ES,
-            status = if (id == AudioOutputRouteId.OPEN_SL_ES) {
+            enabled = id == AudioOutputRouteId.AUDIO_TRACK,
+            status = if (id == AudioOutputRouteId.AUDIO_TRACK) {
                 OutputConnectionStatus.AVAILABLE
             } else {
                 OutputConnectionStatus.UNKNOWN

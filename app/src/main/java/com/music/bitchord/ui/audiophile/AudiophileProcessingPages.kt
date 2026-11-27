@@ -22,14 +22,14 @@ fun EqualizerSettingsPage(
 @Composable
 private fun EqualizerModeSection(settings: EqualizerSettingsState, callbacks: EqualizerSettingsCallbacks) {
     AudiophileSection(title = "Mode & layout") {
-        AudiophileChoiceChips(
+        AudiophileSelectionGroup(
             label = "Equalizer mode",
             options = AudiophileEqualizerMode.entries,
             selected = settings.mode,
             onSelect = callbacks.onModeChange,
             optionLabel = AudiophileEqualizerMode::label,
         )
-        AudiophileChoiceChips(
+        AudiophileSelectionGroup(
             label = "Layout",
             options = EqualizerLayout.entries,
             selected = settings.layout,
@@ -59,7 +59,7 @@ private fun EqualizerBandsSection(settings: EqualizerSettingsState, callbacks: E
                 onValueChange = callbacks.onCustomBandCountChange,
             )
         } else {
-            AudiophileChoiceChips(
+            AudiophileSelectionGroup(
                 label = "Number of bands",
                 options = AudiophileAudioDefaults.fixedBandCounts,
                 selected = settings.bandCount,
@@ -118,14 +118,14 @@ fun ResamplerSettingsPage(
 @Composable
 private fun ResamplerTypeSection(settings: ResamplerSettingsState, callbacks: ResamplerSettingsCallbacks) {
     AudiophileSection(title = "Resampler") {
-        AudiophileChoiceChips(
+        AudiophileSelectionGroup(
             label = "Type",
             options = ResamplerType.entries,
             selected = settings.type,
             onSelect = callbacks.onTypeChange,
             optionLabel = ResamplerType::label,
         )
-        AudiophileChoiceChips(
+        AudiophileSelectionGroup(
             label = "Quality",
             options = ResamplerQuality.entries,
             selected = settings.quality,
@@ -150,7 +150,7 @@ private fun ResamplerFilterSection(settings: ResamplerSettingsState, callbacks: 
             subtitle = "Factory default: 97.0%. Higher values retain more bandwidth near Nyquist.",
             onValueChange = callbacks.onCutoffFrequencyPercentChange,
         )
-        AudiophileChoiceChips(
+        AudiophileSelectionGroup(
             label = "Phase response",
             options = ResamplerPhase.entries,
             selected = settings.phase,
@@ -171,7 +171,7 @@ private fun ResamplerFilterSection(settings: ResamplerSettingsState, callbacks: 
 @Composable
 private fun ResamplerDitherSection(settings: ResamplerSettingsState, callbacks: ResamplerSettingsCallbacks) {
     AudiophileSection(title = "Dither") {
-        AudiophileChoiceChips(
+        AudiophileSelectionGroup(
             label = "Dither mode",
             options = DitherMode.entries,
             selected = settings.dither,

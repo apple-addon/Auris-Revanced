@@ -35,6 +35,17 @@ class AudioSettingsSnapshotsTest {
     }
 
     @Test
+    fun `v1 tone decibels migrate to native gains`() {
+        val decoded = decodePowerampEqSnapshot(
+            "{\"v\":1,\"bass\":6.0,\"treble\":-3.0,\"width\":-1.0,\"tempo\":2.5}",
+        )
+        assertEquals(0.5f, decoded.bassGain, 0.0001f)
+        assertEquals(0f, decoded.trebleGain, 0.0001f)
+        assertEquals(0f, decoded.stereoWidth, 0.0001f)
+        assertEquals(2.5f, decoded.tempo, 0.0001f)
+    }
+
+    @Test
     fun `audiophile snapshot retains policies and route configuration but not runtime status`() {
         val state = AudiophileAudioState(
             qualityOptionsEnabled = true,

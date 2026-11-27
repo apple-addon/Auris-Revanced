@@ -11,11 +11,13 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.Restore
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
@@ -207,20 +209,68 @@ private fun AudiophileRowText(
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
+/** Poweramp-style single-choice row: one-way radio semantics with a selected check. */
 @Composable
-internal fun <T> AudiophileChoiceChips(
+internal fun AudiophileSelectionRow(
+    label: String,
+    selected: Boolean,
+    onSelect: () -> Unit,
+    modifier: Modifier = Modifier,
+    subtitle: String? = null,
+    enabled: Boolean = true,
+) {
+    Row(
+        modifier = modifier
+            .fillMaxWidth()
+            .selectable(
+                selected = selected,
+                enabled = enabled,
+                role = Role.RadioButton,
+                onClick = onSelect,
+            )
+            .padding(vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        AudiophileRowText(
+            title = label,
+            subtitle = subtitle,
+            enabled = enabled,
+            modifier = Modifier.weight(1f),
+        )
+        if (selected) {
+            Icon(
+                imageVector = Icons.Rounded.Check,
+                contentDescription = "Selected",
+                tint = if (enabled) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
+                },
+            )
+        }
+    }
+}
+
+@Composable
+internal fun <T> AudiophileSelectionGroup(
     label: String,
     options: List<T>,
     selected: T,
     onSelect: (T) -> Unit,
     modifier: Modifier = Modifier,
     optionLabel: (T) -> String = { it.toString() },
+    optionSubtitle: (T) -> String? = { null },
+    optionEnabled: (T) -> Boolean = { true },
     enabled: Boolean = true,
 ) {
-    Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(
+        modifier = modifier.fillMaxWidth().selectableGroup(),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
         Text(
             text = label,
+            modifier = Modifier.padding(bottom = 4.dp),
             style = MaterialTheme.typography.bodyMedium,
             color = if (enabled) {
                 MaterialTheme.colorScheme.onSurface
@@ -228,19 +278,14 @@ internal fun <T> AudiophileChoiceChips(
                 MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
             },
         )
-        FlowRow(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            options.forEach { option ->
-                FilterChip(
-                    selected = selected == option,
-                    onClick = { onSelect(option) },
-                    label = { Text(optionLabel(option)) },
-                    enabled = enabled,
-                )
-            }
+        options.forEach { option ->
+            AudiophileSelectionRow(
+                label = optionLabel(option),
+                subtitle = optionSubtitle(option),
+                selected = selected == option,
+                onSelect = { onSelect(option) },
+                enabled = enabled && optionEnabled(option),
+            )
         }
     }
 }

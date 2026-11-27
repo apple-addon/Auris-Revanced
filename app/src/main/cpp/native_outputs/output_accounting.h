@@ -9,10 +9,15 @@ namespace auris {
 /** Callback-side counters; no allocation, locks, or clock calls. */
 class OutputAccounting {
 public:
-    void record_enqueued(uint32_t buffer_frames, uint32_t pcm_frames) {
+    /**
+     * [count_underrun] is false while the queue is being primed before playback
+     * starts: short prefilled buffers there are startup silence, not starvation.
+     */
+    void record_enqueued(
+            uint32_t buffer_frames, uint32_t pcm_frames, bool count_underrun = true) {
         output_frames_.fetch_add(buffer_frames, std::memory_order_relaxed);
         position_frames_.fetch_add(buffer_frames, std::memory_order_relaxed);
-        if (pcm_frames < buffer_frames) {
+        if (count_underrun && pcm_frames < buffer_frames) {
             underruns_.fetch_add(1, std::memory_order_relaxed);
             missing_frames_.fetch_add(buffer_frames - pcm_frames, std::memory_order_relaxed);
         }

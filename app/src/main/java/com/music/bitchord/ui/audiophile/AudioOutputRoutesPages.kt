@@ -1,5 +1,6 @@
 package com.music.bitchord.ui.audiophile
 
+import android.os.Build
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.material3.Button
@@ -7,18 +8,19 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
+import com.music.bitchord.playback.audio.drivers.OutputDriver
 
 @Composable
 fun AudioOutputsSettingsPage(
-    routes: List<AudioOutputRouteState>,
+    settings: AudiophileAudioState,
     navigation: AudiophileNavigationCallbacks,
     callbacks: OutputSettingsCallbacks,
     modifier: Modifier = Modifier,
 ) {
     AudiophilePageList(modifier = modifier.fillMaxSize()) {
-        routes.forEach { route ->
+        settings.outputs.forEach { route ->
             item(key = route.id.name) {
-                AudioOutputRouteSummary(route, navigation, callbacks)
+                AudioOutputRouteSummary(route, settings.outputDriver, navigation, callbacks)
             }
         }
         item {
@@ -33,23 +35,41 @@ fun AudioOutputsSettingsPage(
 @Composable
 private fun AudioOutputRouteSummary(
     route: AudioOutputRouteState,
+    selectedDriver: OutputDriver,
     navigation: AudiophileNavigationCallbacks,
     callbacks: OutputSettingsCallbacks,
 ) {
-    AudiophileSection(title = route.id.label) {
-        AudiophileSwitchRow(
-            label = "Use ${route.id.label}",
-            subtitle = route.id.description,
-            checked = route.enabled,
-            enabled = route.available,
-            onCheckedChange = { callbacks.onRouteEnabledChange(route.id, it) },
-        )
+    AudiophileSection(
+        title = if (route.id == AudioOutputRouteId.CHROMECAST) {
+            route.id.label
+        } else {
+            outputRouteDriverLabel(route, selectedDriver)
+        },
+    ) {
+        if (route.id == AudioOutputRouteId.CHROMECAST) {
+            AudiophileSwitchRow(
+                label = "Use ${route.id.label}",
+                subtitle = "Independent Cast route; does not change the local output driver.",
+                checked = route.enabled,
+                enabled = route.available,
+                onCheckedChange = callbacks.onChromecastEnabledChange,
+            )
+        } else {
+            AudiophileSelectionRow(
+                label = "Use ${outputRouteDriverLabel(route, selectedDriver)}",
+                subtitle = outputRouteDriverDescription(route, selectedDriver),
+                selected = route.enabled,
+                enabled = route.available,
+                onSelect = { callbacks.onRouteSelected(route.id) },
+            )
+        }
         AudiophileBadges(listOf(outputStatusBadge(route.status)))
         if (route.statusDetail.isNotBlank()) {
             AudiophileValueRow(label = "Status", value = route.statusDetail)
         }
+        val routeLabel = outputRouteDriverLabel(route, selectedDriver)
         AudiophileNavigationRow(
-            title = "Configure ${route.id.label}",
+            title = "Configure $routeLabel",
             subtitle = "Independent settings for every output device",
             value = "${route.profiles.count(OutputDeviceProfile::enabled)} of ${route.profiles.size} devices",
             enabled = route.available,
@@ -61,13 +81,17 @@ private fun AudioOutputRouteSummary(
 @Composable
 fun AudioOutputRouteSettingsPage(
     route: AudioOutputRouteState,
+    selectedDriver: OutputDriver,
     namedDeviceName: String,
     navigation: AudiophileNavigationCallbacks,
     callbacks: OutputSettingsCallbacks,
     modifier: Modifier = Modifier,
 ) {
     AudiophilePageList(modifier = modifier.fillMaxSize()) {
-        item { OutputRouteStatusSection(route, callbacks) }
+        item { OutputRouteStatusSection(route, selectedDriver, callbacks) }
+        if (route.id == AudioOutputRouteId.USB_EXCLUSIVE) {
+            item { UsbOutputBackendSection(route, selectedDriver, callbacks) }
+        }
         route.profiles.forEach { profile ->
             item(key = "${route.id.name}:${profile.id}") {
                 OutputDeviceSummary(route.id, profile, navigation, callbacks)
@@ -75,28 +99,86 @@ fun AudioOutputRouteSettingsPage(
         }
         item { NamedDeviceSection(route.id, namedDeviceName, callbacks) }
         item {
+            val routeLabel = outputRouteDriverLabel(route, selectedDriver)
             AudiophileRestoreButton(
                 onClick = { callbacks.onRestoreRouteDefaults(route.id) },
-                label = "Restore ${route.id.label} defaults",
+                label = "Restore $routeLabel defaults",
             )
         }
     }
 }
 
 @Composable
-private fun OutputRouteStatusSection(route: AudioOutputRouteState, callbacks: OutputSettingsCallbacks) {
+private fun OutputRouteStatusSection(
+    route: AudioOutputRouteState,
+    selectedDriver: OutputDriver,
+    callbacks: OutputSettingsCallbacks,
+) {
     AudiophileSection(title = "Output status") {
         AudiophileBadges(listOf(outputStatusBadge(route.status)))
-        AudiophileSwitchRow(
-            label = "Output enabled",
-            checked = route.enabled,
-            enabled = route.available,
-            onCheckedChange = { callbacks.onRouteEnabledChange(route.id, it) },
+        if (route.id == AudioOutputRouteId.CHROMECAST) {
+            AudiophileSwitchRow(
+                label = "Chromecast enabled",
+                subtitle = "Independent Cast route; not a local OutputDriver.",
+                checked = route.enabled,
+                enabled = route.available,
+                onCheckedChange = callbacks.onChromecastEnabledChange,
+            )
+        } else {
+            AudiophileSelectionRow(
+                label = "Use ${outputRouteDriverLabel(route, selectedDriver)}",
+                selected = route.enabled,
+                enabled = route.available,
+                onSelect = { callbacks.onRouteSelected(route.id) },
+            )
+        }
+        AudiophileValueRow(
+            label = "Method",
+            value = outputRouteDriverDescription(route, selectedDriver),
         )
-        AudiophileValueRow(label = "Method", value = route.id.description)
+        if (route.enabled && route.id != AudioOutputRouteId.CHROMECAST) {
+            AudiophileValueRow(label = "Canonical driver", value = selectedDriver.label)
+        }
         if (route.statusDetail.isNotBlank()) {
             AudiophileValueRow(label = "Detail", value = route.statusDetail)
         }
+    }
+}
+
+@Composable
+private fun UsbOutputBackendSection(
+    route: AudioOutputRouteState,
+    selectedDriver: OutputDriver,
+    callbacks: OutputSettingsCallbacks,
+) {
+    val choices = listOf(OutputDriver.USB_EXCLUSIVE, OutputDriver.USB_SYSTEM_BIT_PERFECT)
+    val current = selectedDriver.takeIf { it in choices } ?: OutputDriver.USB_EXCLUSIVE
+    AudiophileSection(title = "USB output backend") {
+        AudiophileSelectionGroup(
+            label = "Output driver",
+            options = choices,
+            selected = current,
+            onSelect = callbacks.onOutputDriverSelected,
+            optionLabel = { it.label },
+            optionSubtitle = { driver ->
+                when (driver) {
+                    OutputDriver.USB_EXCLUSIVE ->
+                        "Userspace usbdevfs; Auris owns the DAC endpoint."
+                    OutputDriver.USB_SYSTEM_BIT_PERFECT ->
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                            "Android system direct path; no userspace USB claim."
+                        } else {
+                            "Requires Android 14 or newer."
+                        }
+                    else -> null
+                }
+            },
+            optionEnabled = { driver ->
+                driver != OutputDriver.USB_SYSTEM_BIT_PERFECT ||
+                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE
+            },
+            enabled = route.available,
+        )
     }
 }
 
@@ -150,6 +232,32 @@ private fun NamedDeviceSection(
             Text("+ Named device")
         }
     }
+}
+
+private fun outputRouteDriverLabel(
+    route: AudioOutputRouteState,
+    selectedDriver: OutputDriver,
+): String = if (
+    route.id == AudioOutputRouteId.USB_EXCLUSIVE &&
+    route.enabled &&
+    selectedDriver == OutputDriver.USB_SYSTEM_BIT_PERFECT
+) {
+    selectedDriver.label
+} else {
+    route.id.label
+}
+
+private fun outputRouteDriverDescription(
+    route: AudioOutputRouteState,
+    selectedDriver: OutputDriver,
+): String = if (
+    route.id == AudioOutputRouteId.USB_EXCLUSIVE &&
+    route.enabled &&
+    selectedDriver == OutputDriver.USB_SYSTEM_BIT_PERFECT
+) {
+    "Android system direct USB output; userspace USB Exclusive is not active."
+} else {
+    route.id.description
 }
 
 internal fun outputStatusBadge(status: OutputConnectionStatus): AudioStatusBadge = AudioStatusBadge(

@@ -6,15 +6,22 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.Remove
 import androidx.compose.material3.FilterChip
@@ -33,6 +40,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
@@ -46,11 +54,75 @@ import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import java.util.Locale
 import kotlin.math.cos
 import kotlin.math.roundToInt
 import kotlin.math.sin
+
+/** Full-window editor with a fixed close bar and one scrolling content parent. */
+@Composable
+internal fun ReferenceFullScreenDialog(
+    title: String,
+    onDismissRequest: () -> Unit,
+    modifier: Modifier = Modifier,
+    containerColor: Color = MaterialTheme.colorScheme.background,
+    contentColor: Color = MaterialTheme.colorScheme.onBackground,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Dialog(
+        onDismissRequest = onDismissRequest,
+        properties = DialogProperties(
+            dismissOnBackPress = true,
+            dismissOnClickOutside = false,
+            usePlatformDefaultWidth = false,
+            decorFitsSystemWindows = false,
+        ),
+    ) {
+        Surface(
+            modifier = Modifier.fillMaxSize(),
+            color = containerColor,
+            contentColor = contentColor,
+        ) {
+            Column(modifier = modifier.fillMaxSize()) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .statusBarsPadding()
+                        .padding(horizontal = 4.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    IconButton(onClick = onDismissRequest) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Rounded.ArrowBack,
+                            contentDescription = "Close $title",
+                        )
+                    }
+                    Text(
+                        text = title,
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .navigationBarsPadding()
+                        .verticalScroll(rememberScrollState())
+                        .padding(start = 16.dp, end = 16.dp, bottom = 24.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp),
+                    content = content,
+                )
+            }
+        }
+    }
+}
 
 @Composable
 internal fun ReferenceSection(
@@ -312,6 +384,7 @@ internal fun ReferenceDial(
     modifier: Modifier = Modifier,
     valueText: String = formatPercent(value),
     enabled: Boolean = true,
+    diameter: Dp = 82.dp,
 ) {
     val latestValue by rememberUpdatedState(value)
     val latestOnChange by rememberUpdatedState(onValueChange)
@@ -326,7 +399,7 @@ internal fun ReferenceDial(
     ) {
         Canvas(
             modifier = Modifier
-                .size(82.dp)
+                .size(diameter)
                 .graphicsLayer { alpha = if (enabled) 1f else 0.38f }
                 .semantics(mergeDescendants = true) {
                     contentDescription = label
@@ -356,9 +429,9 @@ internal fun ReferenceDial(
                 },
         ) {
             val stroke = 6.dp.toPx()
-            val diameter = size.minDimension - stroke * 2f
-            val arcSize = Size(diameter, diameter)
-            val topLeft = Offset((size.width - diameter) / 2f, (size.height - diameter) / 2f)
+            val arcDiameter = size.minDimension - stroke * 2f
+            val arcSize = Size(arcDiameter, arcDiameter)
+            val topLeft = Offset((size.width - arcDiameter) / 2f, (size.height - arcDiameter) / 2f)
             drawArc(
                 color = inactive,
                 startAngle = 135f,
@@ -381,8 +454,8 @@ internal fun ReferenceDial(
             )
             val angle = Math.toRadians((135f + 270f * fraction).toDouble())
             val center = Offset(size.width / 2f, size.height / 2f)
-            val inner = diameter * 0.28f
-            val outer = diameter * 0.43f
+            val inner = arcDiameter * 0.28f
+            val outer = arcDiameter * 0.43f
             drawLine(
                 color = active,
                 start = Offset(

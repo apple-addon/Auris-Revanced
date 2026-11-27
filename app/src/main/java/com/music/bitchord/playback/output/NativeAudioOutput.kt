@@ -215,8 +215,23 @@ class NativeAudioOutput internal constructor(
 
     override fun setAuxEffectSendLevel(level: Float) = Unit
 
-    /** Ignored: neither backend supports dynamic post-open route changes. */
-    override fun setPreferredDevice(device: AudioDeviceInfo?) = Unit
+    /**
+     * AAudio is routed at open time, not changed underneath a live native
+     * stream. A matching/default device is already satisfied; a different live
+     * route must be requested through the provider so a new stream is opened.
+     * OpenSL exposes no post-open device selection at all.
+     */
+    override fun setPreferredDevice(device: AudioDeviceInfo?) {
+        if (device == null) return
+        if (driver == NativeOutputDriver.AAUDIO &&
+            (spec.audioDeviceId == 0 || device.id == spec.audioDeviceId)
+        ) {
+            return
+        }
+        throw UnsupportedOperationException(
+            "${driver.displayName} cannot change physical output after it is opened",
+        )
+    }
 
     override fun canReuseAudioOutput(
         outputConfig: AudioOutputProvider.OutputConfig,
@@ -291,12 +306,16 @@ class NativeAudioOutput internal constructor(
         fun openAAudio(
             spec: NativeOutputSpec,
             requestExclusive: Boolean = true,
-        ): NativeAudioOutput = NativeAudioOutput(
-            NativeOutputDriver.AAUDIO,
-            spec,
-            NativeOutputBridge,
-            NativeOutputBridge.openAAudio(spec, requestExclusive),
-        )
+            audioDeviceId: Int = spec.audioDeviceId,
+        ): NativeAudioOutput {
+            val routedSpec = spec.copy(audioDeviceId = audioDeviceId)
+            return NativeAudioOutput(
+                NativeOutputDriver.AAUDIO,
+                routedSpec,
+                NativeOutputBridge,
+                NativeOutputBridge.openAAudio(routedSpec, requestExclusive),
+            )
+        }
 
         /** Opens the shared OpenSL ES float buffer-queue backend. */
         @JvmStatic
@@ -312,7 +331,12 @@ class NativeAudioOutput internal constructor(
         fun openAAudio(
             config: AudioOutputProvider.OutputConfig,
             requestExclusive: Boolean = true,
-        ): NativeAudioOutput = openAAudio(NativeOutputSpec.fromMedia3(config), requestExclusive)
+            audioDeviceId: Int = 0,
+        ): NativeAudioOutput = openAAudio(
+            NativeOutputSpec.fromMedia3(config),
+            requestExclusive,
+            audioDeviceId,
+        )
 
         @JvmStatic
         fun openOpenSlEs(config: AudioOutputProvider.OutputConfig): NativeAudioOutput =

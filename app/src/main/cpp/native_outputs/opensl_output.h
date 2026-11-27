@@ -35,7 +35,7 @@ private:
 
     bool initialize(std::string &error);
     int prime_locked();
-    int enqueue_buffer(uint32_t index);
+    int enqueue_buffer(uint32_t index, bool count_underrun = true);
     int quiesce_locked(bool reset_position);
     void wait_for_callback();
     void close_locked();

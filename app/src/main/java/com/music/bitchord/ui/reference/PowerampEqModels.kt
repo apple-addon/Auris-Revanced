@@ -8,8 +8,9 @@ data class PowerampEqState(
     val parametricMode: Boolean = false,
     val preampDb: Float = 0f,
     val bands: List<PowerampEqBand> = PowerampEqDefaults.bands,
-    val bassDb: Float = 0f,
-    val trebleDb: Float = 0f,
+    /** Native PAWS tone gains: 0 = neutral, 1 = +100%, matching dsp_bass/treble_gain. */
+    val bassGain: Float = 0f,
+    val trebleGain: Float = 0f,
     val balance: Float = 0f,
     val stereoWidth: Float = 0f,
     val tempo: Float = 1f,
@@ -109,11 +110,11 @@ fun PowerampEqState.normalized(): PowerampEqState {
     return copy(
         bands = normalizedBands,
         preampDb = preampDb.finiteOr(0f).coerceIn(-24f, 24f),
-        bassDb = bassDb.finiteOr(0f).coerceIn(PowerampEqDefaults.MIN_DB, PowerampEqDefaults.MAX_DB),
-        trebleDb = trebleDb.finiteOr(0f).coerceIn(PowerampEqDefaults.MIN_DB, PowerampEqDefaults.MAX_DB),
+        bassGain = bassGain.finiteOr(0f).coerceIn(0f, 1f),
+        trebleGain = trebleGain.finiteOr(0f).coerceIn(0f, 1f),
         balance = balance.finiteOr(0f).coerceIn(-1f, 1f),
-        stereoWidth = stereoWidth.finiteOr(0f).coerceIn(-1f, 1f),
-        tempo = tempo.finiteOr(1f).coerceIn(0.5f, 2f),
+        stereoWidth = stereoWidth.finiteOr(0f).coerceIn(0f, 1f),
+        tempo = tempo.finiteOr(1f).coerceIn(0.5f, 3f),
         volume = volume.finiteOr(1f).coerceIn(0f, 1f),
         reverb = reverb.normalized(),
     )

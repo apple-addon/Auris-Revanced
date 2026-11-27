@@ -2,13 +2,18 @@ package com.music.bitchord.playback.reference.paws
 
 import android.content.Context
 import android.content.ContextWrapper
+import android.os.Build
 import android.os.Looper
+import com.music.bitchord.playback.reference.NativeStreamState
 import com.music.bitchord.playback.reference.ReferenceEngineLoader
 import com.music.bitchord.playback.reference.ReferenceNativeBridge
 import java.lang.reflect.InvocationHandler
 import java.lang.reflect.Method
 import java.lang.reflect.Proxy
 import java.nio.ByteBuffer
+
+/** Original XML parameter IDs for Damp, Filter, Fade, PreDelay, PreDelayMix, Size, Mix. */
+internal val PAWS_REVERB_PARAMETER_IDS = intArrayOf(7, 2, 3, 4, 6, 1, 5)
 
 /** Live PAWS Pipeline2 + output.cc graph. All methods fail with the real JNI/reflection error. */
 data class PawsEqBand(
@@ -20,6 +25,33 @@ data class PawsEqBand(
     val parametric: Boolean = false,
 )
 
+/** Exact values consumed by the original Pipeline2/u21 control methods. */
+data class PawsControlState(
+    val bands: List<PawsEqBand>,
+    val preampLinear: Float = 1f,
+    val equEnabled: Boolean = true,
+    val toneEnabled: Boolean = true,
+    val limiterEnabled: Boolean = false,
+    val bassGain: Float = 0f,
+    val trebleGain: Float = 0f,
+    val stereoWide: Float = 0f,
+    val balance: Float = 0f,
+    val monoEnabled: Boolean = false,
+    val tempo: Float = 1f,
+    val reverbEnabled: Boolean = false,
+    val reverbValues: FloatArray = FloatArray(7),
+) {
+    init {
+        require(bands.isNotEmpty()) { "PAWS needs at least one EQ band" }
+        require(preampLinear in 0f..2f) { "PAWS preamp must be linear 0..2" }
+        require(bassGain in 0f..1f && trebleGain in 0f..1f) { "PAWS tone gains must be 0..1" }
+        require(stereoWide in 0f..1f) { "PAWS stereo-wide must be 0..1" }
+        require(balance in -1f..1f) { "PAWS balance must be -1..1" }
+        require(tempo in 0.5f..3f) { "PAWS tempo must be 0.5..3" }
+        require(reverbValues.size == 7) { "PAWS reverb expects seven values" }
+    }
+}
+
 class PawsHostRuntime(private val loader: ClassLoader) {
     private var application: Any? = null
     private var pluginManager: Any? = null
@@ -27,12 +59,19 @@ class PawsHostRuntime(private val loader: ClassLoader) {
     private var ccService: Any? = null
     private var nativeRef = 0L
     private var inputFd = -1
-    private var defaultsApplied = false
+    private var desiredControls = PawsControlState(bands = DEFAULT_BANDS)
+    private var pcmOpen = false
+    private var pcmOwner = 0
+    private var pcmChannels = 0
+    private var producedFrames = 0L
     val isReady: Boolean get() = nativeRef > 0
     var outputActive = false
         private set
 
     fun initialize(context: Context) {
+        check(Build.SUPPORTED_ABIS.firstOrNull() == "arm64-v8a") {
+            "PAWS PCM output currently supports arm64-v8a only; ARMv7 has no verified native_get_samples address"
+        }
         val app = loader.loadClass("com.auris.audioplayer.Application").getConstructor().newInstance()
         ContextWrapper::class.java.getDeclaredMethod("attachBaseContext", Context::class.java).apply {
             isAccessible = true
@@ -87,7 +126,6 @@ class PawsHostRuntime(private val loader: ClassLoader) {
             .invoke(null, outputContext, ccService)
         nativeRef = pipelineParam(0x1001)
         check(nativeRef > 0) { "PAWS output.cc native reference is unavailable" }
-        check(ReferenceNativeBridge.nativePawsPrepareOutput() == 0) { "nativePawsPrepareOutput failed" }
     }
 
     private fun pluginInfo(uniqName: String): Any {
@@ -169,34 +207,89 @@ class PawsHostRuntime(private val loader: ClassLoader) {
     private fun pipelineParam(selector: Int): Long = checkNotNull(pipeline).javaClass
         .getMethod("Р", Int::class.javaPrimitiveType).invoke(pipeline, selector) as Long
 
-    fun openPcm(sampleRate: Int, channels: Int) {
+    @Synchronized
+    fun openPcm(sampleRate: Int, channels: Int, ownerToken: Int = 0) {
         require(sampleRate > 0 && channels > 0)
-        closePcm()
-        inputFd = ReferenceNativeBridge.nativePawsOpenInput(sampleRate, channels)
-        check(inputFd >= 0) { "Unable to create PAWS PCM pipe" }
-        val handle = checkNotNull(pipeline).javaClass.getField("K").getLong(pipeline)
-        val open = checkNotNull(pipeline).javaClass.getDeclaredMethod(
-            "native_request_open",
-            Long::class.javaPrimitiveType,
-            String::class.java,
-            Int::class.javaPrimitiveType,
-            ByteArray::class.java,
-            Int::class.javaPrimitiveType,
-            Int::class.javaPrimitiveType,
-            Int::class.javaPrimitiveType,
-        ).apply { isAccessible = true }.invoke(pipeline, handle, "pipe:$inputFd", inputFd, null, 0, 0, 0) as Int
-        check(open >= 0) { "Pipeline2.native_request_open(pipe)=$open" }
-        val resume = checkNotNull(pipeline).javaClass.getDeclaredMethod(
-            "native_resume", Long::class.javaPrimitiveType, Boolean::class.javaPrimitiveType,
-        ).apply { isAccessible = true }.invoke(pipeline, handle, true) as Int
-        check(resume >= 0) { "Pipeline2.native_resume=$resume" }
-        if (!defaultsApplied) {
-            setEqBands(DEFAULT_BANDS)
-            setReverb(false, FloatArray(7))
-            defaultsApplied = true
+        check(nativeRef > 0) { "PAWS native output is not initialized" }
+        if (pcmOpen && pcmOwner != ownerToken) {
+            val reason = "PCM FAILED: PAWS graph is busy by another sink"
+            ReferenceEngineLoader.markPawsOutput(NativeStreamState.FAILED, reason)
+            error(reason)
         }
-        outputActive = true
-        ReferenceEngineLoader.markPawsOutput(true, "PAWS NATIVE ACTIVE · Float32 pipe → DSPI → output.cc")
+        closePcm(ownerToken)
+        producedFrames = 0L
+        pcmChannels = channels
+        try {
+            // nativePawsOpenInput also creates a fresh output.cc byte array.
+            inputFd = ReferenceNativeBridge.nativePawsOpenInput(sampleRate, channels)
+            check(inputFd >= 0) { "nativePawsOpenInput=$inputFd" }
+            val handle = checkNotNull(pipeline).javaClass.getField("K").getLong(pipeline)
+            val open = checkNotNull(pipeline).javaClass.getDeclaredMethod(
+                "native_request_open",
+                Long::class.javaPrimitiveType,
+                String::class.java,
+                Int::class.javaPrimitiveType,
+                ByteArray::class.java,
+                Int::class.javaPrimitiveType,
+                Int::class.javaPrimitiveType,
+                Int::class.javaPrimitiveType,
+            ).apply { isAccessible = true }.invoke(pipeline, handle, "pipe:$inputFd", inputFd, null, 0, 0, 0) as Int
+            check(open >= 0) { "Pipeline2.native_request_open(pipe)=$open" }
+            val resume = checkNotNull(pipeline).javaClass.getDeclaredMethod(
+                "native_resume", Long::class.javaPrimitiveType, Boolean::class.javaPrimitiveType,
+            ).apply { isAccessible = true }.invoke(pipeline, handle, true) as Int
+            check(resume >= 0) { "Pipeline2.native_resume=$resume" }
+            applyDesiredControls()
+            pcmOwner = ownerToken
+            pcmOpen = true
+            outputActive = false
+            ReferenceEngineLoader.markPawsOutput(
+                NativeStreamState.OPEN,
+                "PAWS GRAPH READY · waiting for output.cc PCM",
+                producedFrames = 0,
+            )
+        } catch (error: Throwable) {
+            closeNativePcm()
+            val reason = "INIT FAILED: PAWS PCM open: ${rootReason(error)}"
+            ReferenceEngineLoader.markPawsOutput(NativeStreamState.FAILED, reason, producedFrames = 0)
+            throw error
+        }
+    }
+
+    /** Updates real PAWS controls; a live graph fails closed on rejection. */
+    @Synchronized
+    fun setControls(controls: PawsControlState) {
+        desiredControls = controls.copy(
+            bands = controls.bands.toList(),
+            reverbValues = controls.reverbValues.copyOf(),
+        )
+        if (!pcmOpen) return
+        try {
+            applyDesiredControls()
+        } catch (error: Throwable) {
+            failPcm(pcmOwner, "PAWS control update: ${rootReason(error)}")
+            throw error
+        }
+    }
+
+    private fun applyDesiredControls() {
+        val controls = desiredControls
+        val controller = checkNotNull(pipeline).javaClass.getField("x").get(pipeline)
+        val type = controller.javaClass
+        type.getMethod("V", Boolean::class.javaPrimitiveType).invoke(controller, controls.equEnabled)
+        type.getMethod("i0", Boolean::class.javaPrimitiveType).invoke(controller, controls.toneEnabled)
+        type.getMethod("Q", Int::class.javaPrimitiveType, Float::class.javaPrimitiveType)
+            .invoke(controller, 0, controls.bassGain)
+        type.getMethod("Q", Int::class.javaPrimitiveType, Float::class.javaPrimitiveType)
+            .invoke(controller, 1, controls.trebleGain)
+        type.getMethod("c0", Float::class.javaPrimitiveType).invoke(controller, controls.preampLinear)
+        type.getMethod("Y", Boolean::class.javaPrimitiveType).invoke(controller, controls.limiterEnabled)
+        type.getMethod("f0", Float::class.javaPrimitiveType).invoke(controller, controls.stereoWide)
+        type.getMethod("I", Float::class.javaPrimitiveType).invoke(controller, controls.balance)
+        type.getMethod("a0", Boolean::class.javaPrimitiveType).invoke(controller, controls.monoEnabled)
+        type.getMethod("g0", Float::class.javaPrimitiveType).invoke(controller, controls.tempo)
+        setEqBands(controls.bands)
+        setReverb(controls.reverbEnabled, controls.reverbValues)
     }
 
     /** Real DSPI band structures followed by their gain pairs (commands 0x14/0x15). */
@@ -212,7 +305,7 @@ class PawsHostRuntime(private val loader: ClassLoader) {
         check(gainsAccepted) { "PAWS DSPI rejected the gain pairs" }
     }
 
-    /** Real ReverbDSPPlugin float parameters; indexes 1–7 map to the seven hub knobs. */
+    /** Real ReverbDSPPlugin parameters using the original XML IDs, not visual-order guesses. */
     fun setReverb(enabled: Boolean, values: FloatArray) {
         require(values.size == 7) { "PAWS reverb expects seven values" }
         val reverb = pluginInfo("com.auris.audioplayer/plugin.reverb")
@@ -229,36 +322,100 @@ class PawsHostRuntime(private val loader: ClassLoader) {
         }
         if (enabled) {
             values.forEachIndexed { index, value ->
-                check(method.invoke(pipeline, pluginId, 2, 0, index + 1, value.toRawBits(), 0, 0) as Boolean) {
-                    "PAWS reverb parameter ${index + 1} was rejected"
+                val parameter = PAWS_REVERB_PARAMETER_IDS[index]
+                check(method.invoke(pipeline, pluginId, 2, 0, parameter, value.toRawBits(), 0, 0) as Boolean) {
+                    "PAWS reverb parameter $parameter was rejected"
                 }
             }
         }
     }
 
     /** Returns bytes accepted by the lock-free native input ring. */
-    fun writePcm(buffer: ByteBuffer, byteOffset: Int = 0, byteCount: Int = buffer.remaining()): Int {
-        check(outputActive) { "PAWS pipeline is not open" }
-        return ReferenceNativeBridge.nativePawsWriteInput(buffer, byteOffset, byteCount)
+    @Synchronized
+    fun writePcm(
+        ownerToken: Int,
+        buffer: ByteBuffer,
+        byteOffset: Int = 0,
+        byteCount: Int = buffer.remaining(),
+    ): Int {
+        checkOpen(ownerToken)
+        val result = ReferenceNativeBridge.nativePawsWriteInput(buffer, byteOffset, byteCount)
+        if (result < 0) {
+            failPcm(ownerToken, "PAWS input ring error=$result")
+        }
+        return result
     }
 
     /** Returns real PAWS-processed PCM bytes from output.cc. */
-    fun readPcm(destination: ByteBuffer): Int =
-        ReferenceNativeBridge.nativePawsReadOutput(nativeRef, destination)
+    @Synchronized
+    fun readPcm(destination: ByteBuffer, ownerToken: Int): Int {
+        checkOpen(ownerToken)
+        val result = ReferenceNativeBridge.nativePawsReadOutput(nativeRef, destination)
+        if (result < 0) {
+            failPcm(ownerToken, "PAWS output.cc read error=$result")
+            return result
+        }
+        if (result == 0) return 0
+        val frameBytes = pcmChannels * Float.SIZE_BYTES
+        if (result % frameBytes != 0) {
+            failPcm(ownerToken, "PAWS output is not a whole Float32 frame: $result bytes")
+            return -1
+        }
+        producedFrames += result / frameBytes
+        if (!outputActive) {
+            outputActive = true
+            ReferenceEngineLoader.markPawsOutput(
+                NativeStreamState.ACTIVE,
+                "PAWS NATIVE ACTIVE · Float32 pipe → DSPI → output.cc",
+                producedFrames,
+            )
+        }
+        return result
+    }
 
-    fun closePcm() {
-        if (!outputActive && inputFd < 0) return
+    @Synchronized
+    fun failPcm(ownerToken: Int, reason: String) {
+        if (!pcmOpen || pcmOwner != ownerToken) return
+        closeNativePcm()
+        val detail = if (reason.startsWith("PCM FAILED: ")) reason else "PCM FAILED: $reason"
+        ReferenceEngineLoader.markPawsOutput(NativeStreamState.FAILED, detail, producedFrames)
+    }
+
+    @Synchronized
+    fun closePcm(ownerToken: Int? = null) {
+        if (ownerToken != null && pcmOpen && pcmOwner != ownerToken) return
+        if (!pcmOpen && inputFd < 0) return
+        closeNativePcm()
+        ReferenceEngineLoader.markPawsOutput(NativeStreamState.CLOSED, producedFrames = 0)
+    }
+
+    private fun closeNativePcm() {
+        pcmOpen = false
         outputActive = false
-        ReferenceEngineLoader.markPawsOutput(false, null)
-        runCatching {
-            val handle = checkNotNull(pipeline).javaClass.getField("K").getLong(pipeline)
-            checkNotNull(pipeline).javaClass.getDeclaredMethod(
-                "native_stop", Long::class.javaPrimitiveType,
-                Boolean::class.javaPrimitiveType, Boolean::class.javaPrimitiveType,
-            ).apply { isAccessible = true }.invoke(pipeline, handle, true, true)
+        pcmOwner = 0
+        pcmChannels = 0
+        if (inputFd >= 0) {
+            runCatching {
+                val handle = checkNotNull(pipeline).javaClass.getField("K").getLong(pipeline)
+                checkNotNull(pipeline).javaClass.getDeclaredMethod(
+                    "native_stop", Long::class.javaPrimitiveType,
+                    Boolean::class.javaPrimitiveType, Boolean::class.javaPrimitiveType,
+                ).apply { isAccessible = true }.invoke(pipeline, handle, true, true)
+            }
         }
         ReferenceNativeBridge.nativePawsClose()
         inputFd = -1
+    }
+
+    private fun checkOpen(ownerToken: Int) {
+        check(pcmOpen && pcmOwner == ownerToken) { "PAWS pipeline is not open for this sink" }
+    }
+
+    private fun rootReason(error: Throwable): String {
+        val cause = generateSequence(error) { current ->
+            if (current is java.lang.reflect.InvocationTargetException) current.targetException else current.cause
+        }.last()
+        return "${cause.javaClass.simpleName}: ${cause.message ?: "no message"}"
     }
 
     fun close() {

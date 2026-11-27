@@ -122,7 +122,7 @@ internal fun BitPerfectControls(
         checked = settings.dsdRemasteringEnabled,
         onCheckedChange = onDsdRemasteringEnabledChange,
     )
-    AudiophileChoiceChips(
+    AudiophileSelectionGroup(
         label = "DSD rate",
         options = DsdRate.entries,
         selected = settings.dsdRate,

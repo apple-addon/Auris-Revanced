@@ -34,34 +34,58 @@ class HibyHostRuntime(private val loader: ClassLoader) {
             msebIndex = dsp.javaClass.getMethod("OnDspAdd", String::class.java).invoke(dsp, "MSEB") as Int
             check(msebIndex >= 0) { "DspUtil.OnDspAdd(MSEB) failed: $msebIndex" }
         }
+        val getInt = dsp.javaClass.getMethod(
+            "GetDspInfoInt",
+            Int::class.javaPrimitiveType,
+            String::class.java,
+        )
         values.forEachIndexed { index, value ->
+            val expected = value.coerceIn(-100, 100)
             dsp.javaClass.getMethod(
                 "SetDspInfoInt",
                 Int::class.javaPrimitiveType,
                 String::class.java,
                 Int::class.javaPrimitiveType,
-            ).invoke(dsp, msebIndex, MSEB_KEYS[index], value.coerceIn(-100, 100))
+            ).invoke(dsp, msebIndex, MSEB_KEYS[index], expected)
+            val actual = getInt.invoke(dsp, msebIndex, MSEB_KEYS[index]) as Int
+            check(actual == expected) {
+                "HiBy MSEB ${MSEB_KEYS[index]} readback=$actual expected=$expected"
+            }
         }
+        val expectedPreamp = preampDb.coerceIn(-45f, 45f)
         dsp.javaClass.getMethod(
             "SetDspInfoFloat",
             Int::class.javaPrimitiveType,
             String::class.java,
             Float::class.javaPrimitiveType,
-        ).invoke(dsp, msebIndex, "preamp", preampDb.coerceIn(-45f, 45f))
+        ).invoke(dsp, msebIndex, "preamp", expectedPreamp)
+        val actualPreamp = dsp.javaClass.getMethod(
+            "GetDspInfoFloat",
+            Int::class.javaPrimitiveType,
+            String::class.java,
+        ).invoke(dsp, msebIndex, "preamp") as Float
+        check(actualPreamp.closeTo(expectedPreamp)) {
+            "HiBy MSEB preamp readback=$actualPreamp expected=$expectedPreamp"
+        }
     }
 
     fun setPeq(enabled: Boolean, preampDb: Float, bands: Array<FloatArray>) {
         require(bands.size == 10) { "HiBy PEQ needs 10 bands" }
         val av = smartAv ?: error("HiBy SmartAv not initialized")
         val method = av.javaClass.getMethod("native_setObjectAttr", String::class.java, Any::class.java)
-        method.invoke(av, "peq_global_param", floatArrayOf(if (enabled) 1f else 0f, preampDb, if (enabled) 1f else 0f))
+        val global = floatArrayOf(if (enabled) 1f else 0f, preampDb, if (enabled) 1f else 0f)
+        method.invoke(av, "peq_global_param", global)
+        val getObject = av.javaClass.getMethod("getObjectAttr", String::class.java)
+        val actualGlobal = getObject.invoke(av, "peq_global_param") as? FloatArray
+        check(actualGlobal.matches(global)) { "HiBy PEQ global readback=${actualGlobal.contentString()} expected=${global.contentString()}" }
         bands.forEachIndexed { index, band ->
             require(band.size == 5) { "PEQ band $index needs enabled/frequency/Q/gain/type" }
-            method.invoke(
-                av,
-                "peq_param",
-                floatArrayOf(index.toFloat(), band[0], band[1], band[2], band[3], band[4]),
-            )
+            val expected = floatArrayOf(index.toFloat(), band[0], band[1], band[2], band[3], band[4])
+            method.invoke(av, "peq_param", expected)
+            val actual = getObject.invoke(av, "peq_param$index") as? FloatArray
+            check(actual.matches(expected)) {
+                "HiBy PEQ band $index readback=${actual.contentString()} expected=${expected.contentString()}"
+            }
         }
     }
 
@@ -109,16 +133,23 @@ class HibyHostRuntime(private val loader: ClassLoader) {
 
     companion object {
         val MSEB_KEYS = listOf(
-            "master_temp",
-            "bass0",
-            "bass1",
-            "thickness",
-            "vocal",
-            "female",
-            "male_vocal",
-            "female_vocal",
-            "instruments",
-            "air",
+            "mseb_master_temp",
+            "mseb_bass0",
+            "mseb_bass1",
+            "mseb_thickness",
+            "mseb_vocal",
+            "mseb_female",
+            "mseb_male_vocal",
+            "mseb_female_vocal",
+            "mseb_instruments",
+            "mseb_air",
         )
     }
 }
+
+private fun Float.closeTo(other: Float): Boolean = kotlin.math.abs(this - other) <= 0.01f
+
+private fun FloatArray?.matches(expected: FloatArray): Boolean =
+    this != null && size >= expected.size && expected.indices.all { this[it].closeTo(expected[it]) }
+
+private fun FloatArray?.contentString(): String = this?.joinToString(prefix = "[", postfix = "]") ?: "null"

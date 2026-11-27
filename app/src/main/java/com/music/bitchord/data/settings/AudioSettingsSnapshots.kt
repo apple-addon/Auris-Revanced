@@ -59,7 +59,7 @@ internal fun encodePowerampEqSnapshot(state: PowerampEqState): String = snapshot
     JsonObject.serializer(),
     JsonObject(
         mapOf(
-            "v" to 1.json,
+            "v" to 2.json,
             "equ" to state.equEnabled.json,
             "tone" to state.toneEnabled.json,
             "limiter" to state.limiterEnabled.json,
@@ -73,8 +73,8 @@ internal fun encodePowerampEqSnapshot(state: PowerampEqState): String = snapshot
                     "on" to band.enabled.json,
                 ))
             }),
-            "bass" to state.bassDb.json,
-            "treble" to state.trebleDb.json,
+            "bass" to state.bassGain.json,
+            "treble" to state.trebleGain.json,
             "balance" to state.balance.json,
             "width" to state.stereoWidth.json,
             "tempo" to state.tempo.json,
@@ -99,6 +99,10 @@ internal fun encodePowerampEqSnapshot(state: PowerampEqState): String = snapshot
 internal fun decodePowerampEqSnapshot(encoded: String?): PowerampEqState = runCatching {
     val root = encoded?.jsonRoot() ?: return PowerampEqState()
     root.requireVersion()
+    val version = root.int("v", -1)
+    fun toneGain(key: String): Float = root.float(key, 0f).let { value ->
+        if (version == 1) (value / 12f).coerceIn(0f, 1f) else value.coerceIn(0f, 1f)
+    }
     PowerampEqState(
         equEnabled = root.boolean("equ", true),
         toneEnabled = root.boolean("tone", true),
@@ -114,8 +118,8 @@ internal fun decodePowerampEqSnapshot(encoded: String?): PowerampEqState = runCa
                 enabled = band.boolean("on", true),
             )
         } ?: PowerampEqDefaults.bands,
-        bassDb = root.float("bass", 0f),
-        trebleDb = root.float("treble", 0f),
+        bassGain = toneGain("bass"),
+        trebleGain = toneGain("treble"),
         balance = root.float("balance", 0f),
         stereoWidth = root.float("width", 0f),
         tempo = root.float("tempo", 1f),
@@ -472,7 +476,7 @@ private fun String.jsonRoot(): JsonObject = snapshotJson.parseToJsonElement(this
     ?: error("Settings snapshot is not an object")
 
 private fun JsonObject.requireVersion() {
-    check(int("v", -1) == 1) { "Unsupported settings snapshot version" }
+    check(int("v", -1) in 1..2) { "Unsupported settings snapshot version" }
 }
 
 private val Boolean.json get() = JsonPrimitive(this)

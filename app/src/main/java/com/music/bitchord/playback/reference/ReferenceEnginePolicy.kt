@@ -13,26 +13,46 @@ fun referenceTelemetrySummary(
         ReferenceEngineMode.BIT_PERFECT -> "BIT-PERFECT DIRECT"
         ReferenceEngineMode.POWERAMP -> when {
             snapshot.paws.state == NativeLoadState.FAILED -> "INIT FAILED: ${snapshot.paws.detail}"
+            snapshot.pawsOutput.failure != null -> snapshot.pawsOutput.failure!!
             snapshot.pawsOutputActive -> "PAWS NATIVE ACTIVE"
+            snapshot.pawsOutput.state == NativeStreamState.OPEN -> "PAWS GRAPH READY / WAITING FOR PCM"
             snapshot.paws.state == NativeLoadState.LOADED_ACTIVE -> "PAWS NATIVE READY"
             else -> "PAWS BYPASSED: ${snapshot.paws.detail}"
         }
         ReferenceEngineMode.HIBY -> when {
             snapshot.hiby.state == NativeLoadState.FAILED -> "INIT FAILED: ${snapshot.hiby.detail}"
+            snapshot.hibyOutput.failure != null -> snapshot.hibyOutput.failure!!
             snapshot.hibyOutputActive -> "HIBY NATIVE ACTIVE"
+            snapshot.hibyOutput.state == NativeStreamState.OPEN -> "HIBY OUTPUT READY / WAITING FOR PCM"
             snapshot.hiby.state == NativeLoadState.LOADED_ACTIVE -> "HIBY NATIVE READY"
             else -> "HIBY BYPASSED: ${snapshot.hiby.detail}"
         }
         ReferenceEngineMode.HYBRID -> {
-            val failure = listOf(snapshot.paws, snapshot.hiby).firstOrNull { it.state == NativeLoadState.FAILED }
-            if (failure != null) {
-                "INIT FAILED: ${failure.detail}"
-            } else {
-                "INIT FAILED: Hybrid needs an in-memory PAWS PCM transform; libauriscore exports only a live Pipeline2 graph"
+            val engineFailure = listOf(snapshot.paws, snapshot.hiby)
+                .firstOrNull { it.state == NativeLoadState.FAILED }
+            val streamFailure = snapshot.pawsOutput.failure ?: snapshot.hibyOutput.failure
+            when {
+                engineFailure != null -> "INIT FAILED: ${engineFailure.detail}"
+                streamFailure != null -> streamFailure
+                snapshot.pawsOutputActive && snapshot.hibyOutputActive -> "HYBRID NATIVE ACTIVE"
+                snapshot.paws.state == NativeLoadState.LOADED_ACTIVE &&
+                    snapshot.hiby.state == NativeLoadState.LOADED_ACTIVE -> "HYBRID NATIVE READY"
+                else -> "HYBRID BYPASSED: native engines are not both loaded"
             }
         }
     }
 }
+
+private val NativeStreamStatus.failure: String?
+    get() {
+        if (state != NativeStreamState.FAILED) return null
+        val reason = detail?.ifBlank { null } ?: "native PCM stream failed"
+        return if (reason.startsWith("INIT FAILED: ") || reason.startsWith("PCM FAILED: ")) {
+            reason
+        } else {
+            "PCM FAILED: $reason"
+        }
+    }
 
 /** Native OtHiByTrackUtils result and output-frame arithmetic. */
 object HibyPcmContract {

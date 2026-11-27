@@ -68,7 +68,7 @@ private fun OutputDeviceFormatSection(
     callbacks: OutputSettingsCallbacks,
 ) {
     AudiophileSection(title = "Sample rate & format") {
-        AudiophileChoiceChips(
+        AudiophileSelectionGroup(
             label = "Sample Rate",
             options = profile.supportedSampleRatesHz,
             selected = profile.sampleRateHz,
@@ -76,7 +76,7 @@ private fun OutputDeviceFormatSection(
             optionLabel = ::formatSampleRate,
             enabled = profile.supportedSampleRatesHz.isNotEmpty(),
         )
-        AudiophileChoiceChips(
+        AudiophileSelectionGroup(
             label = "Sample Format",
             options = OutputSampleFormat.entries,
             selected = profile.sampleFormat,
@@ -94,7 +94,7 @@ private fun OutputDeviceBufferSection(
 ) {
     val custom = profile.bufferPreset == OutputBufferPreset.CUSTOM
     AudiophileSection(title = "Buffer & delay") {
-        AudiophileChoiceChips(
+        AudiophileSelectionGroup(
             label = "Buffer Size",
             options = OutputBufferPreset.entries,
             selected = profile.bufferPreset,
@@ -194,7 +194,7 @@ private fun OutputDeviceEqualizerPresetSection(
             value = (assigned ?: customAssigned)?.name ?: "No preset assigned",
         )
         if (profile.availableEqualizerPresets.isNotEmpty()) {
-            AudiophileChoiceChips<EqualizerPresetOption?>(
+            AudiophileSelectionGroup<EqualizerPresetOption?>(
                 label = "Preset for this output",
                 options = listOf(null) + profile.availableEqualizerPresets + listOfNotNull(customAssigned),
                 selected = assigned ?: customAssigned,

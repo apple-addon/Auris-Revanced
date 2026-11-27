@@ -7,6 +7,8 @@ import com.music.bitchord.playback.output.NativeOutputSharing
 import com.music.bitchord.playback.output.NativeOutputTelemetry
 import com.music.bitchord.playback.reference.NativeEngineStatus
 import com.music.bitchord.playback.reference.NativeLoadState
+import com.music.bitchord.playback.reference.NativeStreamState
+import com.music.bitchord.playback.reference.NativeStreamStatus
 import com.music.bitchord.playback.reference.ReferenceEngineSnapshot
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -23,7 +25,7 @@ class AudioPipelineExtensionModelTest {
             engines = ReferenceEngineSnapshot(
                 paws = NativeEngineStatus(NativeLoadState.LOADED_ACTIVE, "loaded"),
                 hiby = NativeEngineStatus(NativeLoadState.LOADED_ACTIVE, "loaded"),
-                hibyOutputActive = true,
+                hibyOutput = activeStream(),
             ),
         )
 
@@ -61,24 +63,27 @@ class AudioPipelineExtensionModelTest {
     }
 
     @Test
-    fun `PAWS library load is ready but never fake PCM activity`() {
-        val model = buildAudioPipelineExtension(
-            qualityOptions = true,
-            mode = ReferenceEngineMode.POWERAMP,
-            engines = ReferenceEngineSnapshot(
-                paws = NativeEngineStatus(NativeLoadState.LOADED_ACTIVE, "libauriscore.so loaded"),
-            ),
+    fun `PAWS active badge requires real PCM evidence`() {
+        val engines = ReferenceEngineSnapshot(
+            paws = NativeEngineStatus(NativeLoadState.LOADED_ACTIVE, "libauriscore.so loaded"),
         )
+        val ready = buildAudioPipelineExtension(true, ReferenceEngineMode.POWERAMP, engines)
+        val readyPaws = ready.badges.single { it.owner == NativeEngineBadgeOwner.PAWS }
+        assertEquals("PAWS NATIVE READY", ready.summary)
+        assertEquals("PAWS NATIVE READY", readyPaws.label)
+        assertEquals(AudioPipelineStatus.READY, readyPaws.status)
+        assertEquals(AudioPipelineStatus.READY, ready.summaryStatus)
 
-        assertEquals(
-            "INIT FAILED: Pipeline2 accepts URI/FD input; no arbitrary ExoPlayer PCM transform is exported",
-            model.summary,
+        val active = buildAudioPipelineExtension(
+            true,
+            ReferenceEngineMode.POWERAMP,
+            engines.copy(pawsOutput = activeStream()),
         )
-        val paws = model.badges.single { it.owner == NativeEngineBadgeOwner.PAWS }
-        assertEquals("PAWS LIBRARY LOADED", paws.label)
-        assertEquals(AudioPipelineStatus.READY, paws.status)
-        assertFalse(paws.label.contains("NATIVE ACTIVE"))
-        assertEquals(AudioPipelineStatus.FAILED, model.summaryStatus)
+        val activePaws = active.badges.single { it.owner == NativeEngineBadgeOwner.PAWS }
+        assertEquals("PAWS NATIVE ACTIVE", active.summary)
+        assertEquals("PAWS NATIVE ACTIVE", activePaws.label)
+        assertEquals(AudioPipelineStatus.ACTIVE, activePaws.status)
+        assertEquals(AudioPipelineStatus.ACTIVE, active.summaryStatus)
     }
 
     @Test
@@ -90,7 +95,7 @@ class AudioPipelineExtensionModelTest {
         val active = buildAudioPipelineExtension(
             true,
             ReferenceEngineMode.HIBY,
-            loaded.copy(hibyOutputActive = true),
+            loaded.copy(hibyOutput = activeStream()),
         )
 
         assertEquals("HIBY NATIVE READY", ready.summary)
@@ -104,7 +109,7 @@ class AudioPipelineExtensionModelTest {
             ReferenceEngineMode.HIBY,
             ReferenceEngineSnapshot(
                 hiby = NativeEngineStatus(NativeLoadState.FAILED, "open failed"),
-                hibyOutputActive = true,
+                hibyOutput = activeStream(),
             ),
         )
         assertFalse(failed.badges.any { it.status == AudioPipelineStatus.ACTIVE })
@@ -112,24 +117,25 @@ class AudioPipelineExtensionModelTest {
     }
 
     @Test
-    fun `hybrid never fakes a complete native chain`() {
-        val model = buildAudioPipelineExtension(
-            qualityOptions = true,
-            mode = ReferenceEngineMode.HYBRID,
-            engines = ReferenceEngineSnapshot(
-                paws = NativeEngineStatus(NativeLoadState.LOADED_ACTIVE, "loaded"),
-                hiby = NativeEngineStatus(NativeLoadState.LOADED_ACTIVE, "loaded"),
-                hibyOutputActive = true,
-            ),
+    fun `hybrid active requires both native stages`() {
+        val engines = ReferenceEngineSnapshot(
+            paws = NativeEngineStatus(NativeLoadState.LOADED_ACTIVE, "loaded"),
+            hiby = NativeEngineStatus(NativeLoadState.LOADED_ACTIVE, "loaded"),
+            hibyOutput = activeStream(),
         )
+        val partial = buildAudioPipelineExtension(true, ReferenceEngineMode.HYBRID, engines)
+        assertEquals("HYBRID NATIVE READY", partial.summary)
+        assertEquals(AudioPipelineStatus.READY, partial.summaryStatus)
+        assertFalse(partial.summary.contains("HYBRID NATIVE ACTIVE"))
 
-        assertEquals(
-            "INIT FAILED: Hybrid needs an in-memory PAWS PCM transform; libauriscore exports only a live Pipeline2 graph",
-            model.summary,
+        val active = buildAudioPipelineExtension(
+            true,
+            ReferenceEngineMode.HYBRID,
+            engines.copy(pawsOutput = activeStream()),
         )
-        assertEquals(AudioPipelineStatus.FAILED, model.summaryStatus)
-        assertFalse(model.summary.contains("HYBRID NATIVE ACTIVE"))
-        assertEquals(AudioPipelineStatus.READY, model.badges.first().status)
+        assertEquals("HYBRID NATIVE ACTIVE", active.summary)
+        assertEquals(AudioPipelineStatus.ACTIVE, active.summaryStatus)
+        assertTrue(active.badges.all { it.status == AudioPipelineStatus.ACTIVE })
     }
 
     @Test
@@ -220,19 +226,20 @@ class AudioPipelineExtensionModelTest {
     }
 
     @Test
-    fun `HiBy output failure is not hidden by engine ready summary`() {
+    fun `HiBy output failure is not hidden by engine ready state`() {
         val failure = "INIT FAILED: OtHiByTrackUtils.createTrack=-2"
         val model = buildAudioPipelineExtension(
             qualityOptions = true,
             mode = ReferenceEngineMode.HIBY,
             engines = ReferenceEngineSnapshot(
                 hiby = NativeEngineStatus(NativeLoadState.LOADED_ACTIVE, "loaded"),
-                hibyOutputActive = false,
-                outputDetail = failure,
+                hibyOutput = NativeStreamStatus(NativeStreamState.FAILED, failure),
             ),
         )
 
-        assertEquals("HIBY NATIVE READY", model.summary)
+        assertEquals(failure, model.summary)
+        assertEquals(AudioPipelineStatus.FAILED, model.summaryStatus)
+        assertEquals(failure, model.timeline.first().detail)
         assertEquals(failure, model.timeline.last().detail)
         assertEquals(AudioPipelineStatus.FAILED, model.timeline.last().status)
         assertTrue(model.deductions.any { it.label == failure && it.points == null })
@@ -245,4 +252,6 @@ class AudioPipelineExtensionModelTest {
         assertEquals("176.4 kHz", pipelineRateText(176_400))
         assertEquals("48 kHz", pipelineRateText(48_000))
     }
+
+    private fun activeStream() = NativeStreamStatus(NativeStreamState.ACTIVE, producedFrames = 48)
 }

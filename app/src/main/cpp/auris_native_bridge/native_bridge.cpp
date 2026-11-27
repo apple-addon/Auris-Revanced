@@ -157,12 +157,10 @@ Java_com_music_bitchord_playback_reference_ReferenceNativeBridge_nativeHibyNowCo
     auto fn = symbol<ConsumedCall>(open_engine("libhibyservice.so"),
             "Java_com_hiby_music_sdk_util_OtHiByTrackUtils_nowConsumed");
     if (!fn) return -1008;
-    jlong result = fn(env, nullptr, output);
-    jlong native_value = 0;
-    if (output && env->GetArrayLength(output) > 0) {
-        env->GetLongArrayRegion(output, 0, 1, &native_value);
-    }
-    return result != 0 ? result : native_value;
+    // The packaged ARM64 and ARMv7 entry points return consumed frames and
+    // mirror the same value into output. Zero is valid consumption and a
+    // negative return is an error; never replace either with array contents.
+    return fn(env, nullptr, output);
 }
 
 JNIEXPORT void JNICALL

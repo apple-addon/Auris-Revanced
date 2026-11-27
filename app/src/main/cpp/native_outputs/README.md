@@ -6,23 +6,27 @@ Real, independent PCM-float outputs. This module does **not** modify or replace
 ## Targets
 
 - `AAudioOutput`: blocking `AAudioStream_write` with `AAUDIO_FORMAT_PCM_FLOAT`,
-  low-latency performance request, exclusive-first open and one shared-open
-  fallback. The error callback covers disconnect/transport errors and only sets
-  atomic failure state (AAudio forbids close/write/pause in that callback).
-  Position prefers `AAudioStream_getTimestamp(CLOCK_MONOTONIC)` and falls back
-  to `getFramesRead`; XRuns and actual sharing/rate/buffer sizes are queried.
+  media usage/content, low-latency performance request, exclusive-first open and
+  one shared-open fallback. A non-zero app-selected `AudioDeviceInfo` id is
+  requested on the builder and verified on the opened stream; a different
+  physical device fails instead of silently using the default. The error
+  callback covers disconnect/transport errors and only sets atomic failure
+  state (AAudio forbids close/write/pause in that callback). Position prefers
+  `AAudioStream_getTimestamp(CLOCK_MONOTONIC)` and falls back to
+  `getFramesRead`; XRuns and actual sharing/rate/buffer sizes are queried.
 - `OpenSlEsOutput`: `SLAndroidSimpleBufferQueueItf`, four preallocated buffers
   of approximately 10 ms, `SL_ANDROID_DATAFORMAT_PCM_EX` + float representation,
-  one producer/one consumer lock-free float ring, short-buffer/underrun counts,
-  and a submitted-output-frame position clock. OpenSL output is always reported
-  shared; no exclusive claim is made.
+  media stream type, one producer/one consumer lock-free float ring,
+  short-buffer/underrun counts, and a submitted-output-frame position clock.
+  OpenSL output is always reported shared; no exclusive claim is made.
 
-All short OpenSL buffers are zero-filled. Native callback paths allocate no
-memory, take no mutex, and make no JNI calls. Volume is applied once while PCM
-is copied into native storage. A flush resets position but preserves lifetime
-XRun/underrun diagnostics. Format/rate/channel mismatches, queue failures and
-AAudio disconnects fail closed; no runtime driver or `AudioTrack` substitution
-is hidden here.
+All short OpenSL buffers are zero-filled. Priming those buffers before playback
+is startup silence, not counted as an underrun; short buffers after playback
+starts are. Native callback paths allocate no memory, take no mutex, and make
+no JNI calls. Volume is applied once while PCM is copied into native storage. A
+flush resets position but preserves lifetime XRun/underrun diagnostics.
+Format/rate/channel mismatches, queue failures and AAudio disconnects fail
+closed; no runtime driver or `AudioTrack` substitution is hidden here.
 
 ## Parent CMake integration
 
@@ -47,7 +51,11 @@ unconditionally on API 26/27.
 ## Kotlin construction
 
 ```kotlin
-val aaudio = NativeAudioOutput.openAAudio(spec, requestExclusive = true)
+val aaudio = NativeAudioOutput.openAAudio(
+    spec,
+    requestExclusive = true,
+    audioDeviceId = selectedAudioDeviceInfo.id,
+)
 val opensl = NativeAudioOutput.openOpenSlEs(spec)
 ```
 

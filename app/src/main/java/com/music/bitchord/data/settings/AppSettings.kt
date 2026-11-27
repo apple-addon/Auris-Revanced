@@ -1948,10 +1948,13 @@ object AppSettings {
         audiophileAudioState.value = decodeAudiophileSnapshot(
             prefs.getString(KEY_AUDIOPHILE_AUDIO_STATE, null),
         ).let { decoded ->
-            decoded.copy(
-                qualityOptionsEnabled = qualityOptions.value,
-                bitPerfect = decoded.bitPerfect.copy(perfectBitPerfectEnabled = bitPerfect.value),
-                advancedTweaks = decoded.advancedTweaks.copy(referenceMode = currentAudiophileReferenceMode()),
+            com.music.bitchord.ui.audiophile.AudiophileOutputRouting.reconcile(
+                decoded.copy(
+                    qualityOptionsEnabled = qualityOptions.value,
+                    bitPerfect = decoded.bitPerfect.copy(perfectBitPerfectEnabled = bitPerfect.value),
+                    advancedTweaks = decoded.advancedTweaks.copy(referenceMode = currentAudiophileReferenceMode()),
+                ),
+                outputDriver.value,
             )
         }
         preferUsbDac.value = prefs.getBoolean(KEY_PREFER_USB_DAC, false)
@@ -3204,14 +3207,19 @@ object AppSettings {
             val transaction = reduction.transaction
             if (transaction != null && !applyAudioPolicyTransaction(transaction)) return
             audioPolicyState.value = reduction.state.copy(settings = audioPolicySnapshot())
-            audiophileAudioState.value = audiophileAudioState.value.copy(
-                qualityOptionsEnabled = qualityOptions.value,
-                bitPerfect = audiophileAudioState.value.bitPerfect.copy(
-                    perfectBitPerfectEnabled = bitPerfect.value,
+            // Reconcile from the committed scalar for requests, confirmations and cancellations.
+            // A pending route selection must never leak into the enabled flags before confirmation.
+            audiophileAudioState.value = com.music.bitchord.ui.audiophile.AudiophileOutputRouting.reconcile(
+                audiophileAudioState.value.copy(
+                    qualityOptionsEnabled = qualityOptions.value,
+                    bitPerfect = audiophileAudioState.value.bitPerfect.copy(
+                        perfectBitPerfectEnabled = bitPerfect.value,
+                    ),
+                    advancedTweaks = audiophileAudioState.value.advancedTweaks.copy(
+                        referenceMode = currentAudiophileReferenceMode(),
+                    ),
                 ),
-                advancedTweaks = audiophileAudioState.value.advancedTweaks.copy(
-                    referenceMode = currentAudiophileReferenceMode(),
-                ),
+                outputDriver.value,
             )
         }
     }
@@ -3275,9 +3283,9 @@ object AppSettings {
     fun setPowerampEqState(value: PowerampEqState, presetName: String? = null) {
         val normalized = value.normalized()
         val normalizedPresetName = presetName?.trim()?.takeIf { it.isNotEmpty() }
-        // The ten PEQ bands have a real HiBy endpoint. Balance, tempo and
-        // volume use the existing playback controls; all six values advance
-        // from one preference transaction rather than half-applying a preset.
+        // Poweramp bands mirror into HiBy only outside Hybrid. Hybrid already
+        // runs the same PAWS bands; mirroring there would apply every EQ twice.
+        val mirrorHibyPeq = referenceEngineMode.value != ReferenceEngineMode.HYBRID
         val peq = PeqState(
             enabled = normalized.equEnabled,
             presetName = "Poweramp EQ",
@@ -3286,8 +3294,8 @@ object AppSettings {
                 com.music.bitchord.ui.reference.PeqBand(
                     frequencyHz = band.frequencyHz,
                     gainDb = (band.gainDb + when (index) {
-                        0 -> if (normalized.toneEnabled) normalized.bassDb else 0f
-                        normalized.bands.lastIndex -> if (normalized.toneEnabled) normalized.trebleDb else 0f
+                        0 -> if (normalized.toneEnabled) normalized.bassGain * 12f else 0f
+                        normalized.bands.lastIndex -> if (normalized.toneEnabled) normalized.trebleGain * 12f else 0f
                         else -> 0f
                     }).coerceIn(-12f, 12f),
                     q = band.q,
@@ -3296,23 +3304,23 @@ object AppSettings {
             },
         ).normalized()
         val balance = normalized.balance.coerceIn(-1f, 1f)
-        val tempo = normalized.tempo.coerceIn(0.5f, 2f)
+        val tempo = normalized.tempo.coerceIn(0.5f, 3f)
         val volume = normalized.volume.coerceIn(0f, 1f)
         synchronized(audioSnapshotLock) {
             if (::prefs.isInitialized) {
-                val committed = prefs.edit()
+                val editor = prefs.edit()
                     .putString(KEY_POWERAMP_EQ_STATE, encodePowerampEqSnapshot(normalized))
                     .putString(KEY_POWERAMP_PRESET_NAME, normalizedPresetName ?: powerampPresetName.value)
-                    .putString(KEY_HIBY_PEQ_STATE, encodePeqSnapshot(peq))
                     .putFloat(KEY_EQ_BALANCE, balance)
                     .putFloat(KEY_SPEED, tempo)
                     .putFloat(KEY_PLAYER_VOLUME, volume)
-                    .commit()
+                if (mirrorHibyPeq) editor.putString(KEY_HIBY_PEQ_STATE, encodePeqSnapshot(peq))
+                val committed = editor.commit()
                 if (!committed) return
             }
             powerampEqState.value = normalized
             normalizedPresetName?.let { powerampPresetName.value = it }
-            hibyPeqState.value = peq
+            if (mirrorHibyPeq) hibyPeqState.value = peq
             equalizerBalance.value = balance
             playbackSpeed.value = tempo
             playerVolume.value = volume
@@ -3340,18 +3348,8 @@ object AppSettings {
     }
 
     fun setAudiophileAudioState(value: AudiophileAudioState) {
-        val previous = audiophileAudioState.value
-        val newlyEnabledRoute = value.outputs.firstOrNull { route ->
-            route.enabled && previous.outputs.firstOrNull { it.id == route.id }?.enabled != true
-        }?.id
-        val requestedDriver = when (newlyEnabledRoute) {
-            com.music.bitchord.ui.audiophile.AudioOutputRouteId.OPEN_SL_ES -> OutputDriver.OPENSL_ES
-            com.music.bitchord.ui.audiophile.AudioOutputRouteId.HI_RES -> OutputDriver.HI_RES
-            com.music.bitchord.ui.audiophile.AudioOutputRouteId.AAUDIO -> OutputDriver.AAUDIO
-            com.music.bitchord.ui.audiophile.AudioOutputRouteId.USB_EXCLUSIVE -> OutputDriver.USB_EXCLUSIVE
-            com.music.bitchord.ui.audiophile.AudioOutputRouteId.AUDIO_TRACK -> OutputDriver.AUDIO_TRACK
-            else -> null
-        }
+        // Route rows edit one scalar. The canonical policy reducer alone commits that selection.
+        val requestedDriver = value.outputDriver
         val qualityRequested = value.qualityOptionsEnabled != qualityOptions.value
         val bitPerfectRequested = value.bitPerfect.perfectBitPerfectEnabled != bitPerfect.value
         val requestedReferenceMode = when (value.advancedTweaks.referenceMode) {
@@ -3362,10 +3360,13 @@ object AppSettings {
         }
         val referenceModeRequested = value.advancedTweaks.referenceModeEnabled &&
             requestedReferenceMode != referenceEngineMode.value
-        val normalized = value.copy(
-            qualityOptionsEnabled = qualityOptions.value,
-            bitPerfect = value.bitPerfect.copy(perfectBitPerfectEnabled = bitPerfect.value),
-            advancedTweaks = value.advancedTweaks.copy(referenceMode = currentAudiophileReferenceMode()),
+        val normalized = com.music.bitchord.ui.audiophile.AudiophileOutputRouting.reconcile(
+            value.copy(
+                qualityOptionsEnabled = qualityOptions.value,
+                bitPerfect = value.bitPerfect.copy(perfectBitPerfectEnabled = bitPerfect.value),
+                advancedTweaks = value.advancedTweaks.copy(referenceMode = currentAudiophileReferenceMode()),
+            ),
+            outputDriver.value,
         )
         val fade = normalized.crossfadeFadeGapless
         val crossfade = if (fade.autoAdvanceFading == com.music.bitchord.ui.audiophile.AutoAdvanceFading.CROSSFADE) {
@@ -3396,7 +3397,7 @@ object AppSettings {
         if (qualityRequested) setQualityOptions(value.qualityOptionsEnabled)
         if (bitPerfectRequested) setBitPerfect(value.bitPerfect.perfectBitPerfectEnabled)
         if (referenceModeRequested) setReferenceEngineMode(requestedReferenceMode)
-        if (requestedDriver != null && requestedDriver != outputDriver.value) setOutputDriver(requestedDriver)
+        if (requestedDriver != outputDriver.value) setOutputDriver(requestedDriver)
     }
 
     fun setDsdOutputMode(value: DsdOutputMode) {

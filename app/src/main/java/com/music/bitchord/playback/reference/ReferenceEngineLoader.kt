@@ -11,6 +11,7 @@ import dalvik.system.DexClassLoader
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import java.io.File
 import java.io.IOException
 import java.lang.reflect.InvocationTargetException
@@ -24,14 +25,27 @@ data class NativeEngineStatus(
     val capabilities: Set<String> = emptySet(),
 )
 
+enum class NativeStreamState { CLOSED, OPEN, ACTIVE, FAILED }
+
+/** Live PCM evidence for one native endpoint. OPEN alone never means ACTIVE. */
+data class NativeStreamStatus(
+    val state: NativeStreamState = NativeStreamState.CLOSED,
+    val detail: String? = null,
+    val producedFrames: Long = 0,
+)
+
 data class ReferenceEngineSnapshot(
     val paws: NativeEngineStatus = NativeEngineStatus(NativeLoadState.BYPASSED, "Quality Options OFF"),
     val hiby: NativeEngineStatus = NativeEngineStatus(NativeLoadState.BYPASSED, "Quality Options OFF"),
-    val hibyOutputActive: Boolean = false,
-    val pawsOutputActive: Boolean = false,
-    val outputDetail: String? = null,
+    val pawsOutput: NativeStreamStatus = NativeStreamStatus(),
+    val hibyOutput: NativeStreamStatus = NativeStreamStatus(),
     val driverTelemetry: OutputDriverTelemetry? = null,
-)
+) {
+    val pawsOutputActive: Boolean
+        get() = pawsOutput.state == NativeStreamState.ACTIVE && pawsOutput.producedFrames > 0
+    val hibyOutputActive: Boolean
+        get() = hibyOutput.state == NativeStreamState.ACTIVE && hibyOutput.producedFrames > 0
+}
 
 /** Ordered, fail-closed loader for the exact rebranded JNI host DEX archives. */
 object ReferenceEngineLoader {
@@ -63,8 +77,20 @@ object ReferenceEngineLoader {
                 bypass(mode == ReferenceEngineMode.BIT_PERFECT)
                 return
             }
-            if (loadedMode == mode) return
+            val ready = when (mode) {
+                ReferenceEngineMode.POWERAMP -> mutableStatus.value.paws.state == NativeLoadState.LOADED_ACTIVE
+                ReferenceEngineMode.HIBY -> mutableStatus.value.hiby.state == NativeLoadState.LOADED_ACTIVE
+                ReferenceEngineMode.HYBRID ->
+                    mutableStatus.value.paws.state == NativeLoadState.LOADED_ACTIVE &&
+                        mutableStatus.value.hiby.state == NativeLoadState.LOADED_ACTIVE
+                ReferenceEngineMode.BIT_PERFECT -> false
+            }
+            if (loadedMode == mode && ready) return
             closeWriterOnly()
+            runCatching { pawsRuntime?.close() }
+            pawsRuntime = null
+            pawsLoader = null
+            hibyRuntime = null
             loadedMode = mode
             mutableStatus.value = ReferenceEngineSnapshot()
             if (mode == ReferenceEngineMode.POWERAMP || mode == ReferenceEngineMode.HYBRID) {
@@ -98,10 +124,11 @@ object ReferenceEngineLoader {
             Log.i(TAG, "PAWS native core loaded; PCM transform requires a live Pipeline2 graph")
         } catch (error: Throwable) {
             val reason = rootCause(error)
+            runCatching { pawsRuntime?.close() }
             pawsRuntime = null
-            mutableStatus.value = mutableStatus.value.copy(
-                paws = NativeEngineStatus(NativeLoadState.FAILED, reason),
-            )
+            mutableStatus.update {
+                it.copy(paws = NativeEngineStatus(NativeLoadState.FAILED, reason))
+            }
             Log.e(TAG, "PAWS INIT FAILED: $reason", error)
         }
     }
@@ -182,16 +209,34 @@ object ReferenceEngineLoader {
         }
     }
 
-    fun markHibyOutput(active: Boolean, detail: String?) {
-        mutableStatus.value = mutableStatus.value.copy(hibyOutputActive = active, outputDetail = detail)
+    fun markHibyOutput(
+        state: NativeStreamState,
+        detail: String? = null,
+        producedFrames: Long = mutableStatus.value.hibyOutput.producedFrames,
+    ) {
+        require(state != NativeStreamState.ACTIVE || producedFrames > 0) {
+            "HiBy ACTIVE requires positive PCM frame evidence"
+        }
+        mutableStatus.update {
+            it.copy(hibyOutput = NativeStreamStatus(state, detail, producedFrames.coerceAtLeast(0)))
+        }
     }
 
-    fun markPawsOutput(active: Boolean, detail: String?) {
-        mutableStatus.value = mutableStatus.value.copy(pawsOutputActive = active, outputDetail = detail)
+    fun markPawsOutput(
+        state: NativeStreamState,
+        detail: String? = null,
+        producedFrames: Long = mutableStatus.value.pawsOutput.producedFrames,
+    ) {
+        require(state != NativeStreamState.ACTIVE || producedFrames > 0) {
+            "PAWS ACTIVE requires positive PCM frame evidence"
+        }
+        mutableStatus.update {
+            it.copy(pawsOutput = NativeStreamStatus(state, detail, producedFrames.coerceAtLeast(0)))
+        }
     }
 
     fun markDriver(telemetry: OutputDriverTelemetry) {
-        mutableStatus.value = mutableStatus.value.copy(driverTelemetry = telemetry)
+        mutableStatus.update { it.copy(driverTelemetry = telemetry) }
     }
 
     fun bypass(bitPerfect: Boolean = false) {
@@ -206,7 +251,6 @@ object ReferenceEngineLoader {
             mutableStatus.value = ReferenceEngineSnapshot(
                 paws = NativeEngineStatus(NativeLoadState.BYPASSED, detail),
                 hiby = NativeEngineStatus(NativeLoadState.BYPASSED, detail),
-                outputDetail = detail,
             )
         }
     }
@@ -214,7 +258,9 @@ object ReferenceEngineLoader {
     private fun closeWriterOnly() {
         runCatching { HibyNativeTrackWriter.close() }
         runCatching { pawsRuntime?.closePcm() }
-        mutableStatus.value = mutableStatus.value.copy(hibyOutputActive = false, pawsOutputActive = false)
+        mutableStatus.update {
+            it.copy(pawsOutput = NativeStreamStatus(), hibyOutput = NativeStreamStatus())
+        }
     }
 
     fun telemetrySummary(): String = referenceTelemetrySummary(

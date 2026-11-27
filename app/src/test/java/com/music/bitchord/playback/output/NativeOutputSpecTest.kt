@@ -23,6 +23,8 @@ class NativeOutputSpecTest {
         assertEquals(8, spec.frameBytes)
         assertEquals(1_000, spec.requestedBufferFrames)
         assertEquals(37, spec.audioSessionId)
+        assertEquals(0, spec.audioDeviceId)
+        assertEquals(42, spec.copy(audioDeviceId = 42).audioDeviceId)
     }
 
     @Test

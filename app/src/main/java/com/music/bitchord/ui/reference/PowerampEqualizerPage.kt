@@ -108,18 +108,18 @@ internal fun PowerampEqualizerPage(
             ) {
                 ReferenceDial(
                     label = "Bass",
-                    value = state.bassDb,
-                    valueRange = -12f..12f,
+                    value = state.bassGain,
+                    valueRange = 0f..1f,
                     onValueChange = { onStateChange(PowerampEqReducer.setBass(state, it)) },
-                    valueText = formatDb(state.bassDb),
+                    valueText = formatPercent(state.bassGain),
                     enabled = state.equEnabled && state.toneEnabled,
                 )
                 ReferenceDial(
                     label = "Treble",
-                    value = state.trebleDb,
-                    valueRange = -12f..12f,
+                    value = state.trebleGain,
+                    valueRange = 0f..1f,
                     onValueChange = { onStateChange(PowerampEqReducer.setTreble(state, it)) },
-                    valueText = formatDb(state.trebleDb),
+                    valueText = formatPercent(state.trebleGain),
                     enabled = state.equEnabled && state.toneEnabled,
                 )
             }
